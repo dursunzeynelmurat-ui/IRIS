@@ -168,9 +168,11 @@ Events are skipped if:
 ```
 src/
 ├── components/
+│   ├── ErrorBoundary.tsx    # Top-level crash recovery boundary
 │   └── EventCard.tsx        # Card with vote buttons (uses useUserSignal)
 ├── lib/
-│   └── supabase.ts          # Supabase client (env-var validated)
+│   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
+│   └── supabase.ts          # Supabase client (env-var validated, chunked SecureStore)
 ├── hooks/
 │   ├── useAuth.ts           # Session state + loading
 │   ├── useEvents.ts         # Event list fetch + realtime + pull-to-refresh
@@ -459,29 +461,37 @@ npx expo start
 
 ### Implemented
 
-- Event feed (list + detail) with dark UI design system
-- EventCard: status badge, trust score bar (color-coded), Confirm/Dispute buttons
-- Pull-to-refresh on event list
-- Timeline updates (chronological, per event)
+- Event feed (list + detail) with full dark UI design system
+- EventCard: status badge (color per status), trust score bar, source count, relative timestamp, Confirm/Dispute buttons
+- Status filter tab bar on event list (All / Emerging / Developing / Verified / Disputed) — client-side, no extra fetch
+- Pull-to-refresh on both event list and event detail screens
+- Timeline updates (chronological, per event) with tappable source URLs (opens in browser)
+- Dynamic navigation header title on EventDetail (shows event title once loaded)
+- Source count displayed on both EventCard and EventDetail header
 - User signaling (confirm / dispute) on both list cards and detail screen
   - Vote state fetched from DB on mount — persists across navigation
   - Optimistic update with revert on failure
 - Trust score calculation (server-side Postgres RPC — atomic, race-safe)
 - Realtime synchronization:
   - List screen: `events-feed` channel patches trust score on any event UPDATE
-  - Detail screen: two channels for event UPDATE + event_updates INSERT
+  - Detail screen: two channels for event UPDATE + event_updates INSERT (deduped by id)
 - Authentication (email + password via `signInWithPassword` / `signUp`)
-- Sign Out header button
-- Ingestion script with duplicate guard (15 seed events included)
-- Production hardening: sanitized errors, auth loading guard, realtime dedup, signal no-op guard
+  - Email regex validation before Supabase call
+  - Sign Out button accessible from both EventList and EventDetail headers
+- Error boundary wrapping the full navigation stack (crash recovery screen)
+- `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
+- Ingestion script (`npx tsx supabase/seed/ingest.ts`) with duplicate guard (15 seed events)
+- Production hardening: sanitized errors, auth loading guard, realtime payload type guards,
+  realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
+- Security: explicit RESTRICTIVE deny policies (migration 004) on events, event_updates, users
 
 ### Not Implemented
 
-- Advanced error recovery / retry logic
-- Rate limiting or abuse protection
-- Offline support
-- Analytics tracking
-- Advanced ingestion (AI-assisted, scraping, fuzzy dedup)
-- Reputation or source weighting systems
-- Automated moderation
+- Session persistence across restarts (disabled for Expo Go; re-enable SecureStoreAdapter + `persistSession: true` in `supabase.ts` for production EAS builds)
+- Offline / no-connection indicator
 - Push notifications
+- Rate limiting / abuse protection
+- Advanced ingestion (AI-assisted, fuzzy dedup)
+- Reputation or source weighting
+- Automated moderation
+- Analytics

@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
@@ -31,8 +32,11 @@ function UpdateItem({ update }: { update: EventUpdate }) {
   const hasLink = !!update.source_url;
 
   function openLink() {
-    if (update.source_url) {
-      Linking.openURL(update.source_url).catch(() => {/* ignore */});
+    if (!update.source_url) return;
+    try {
+      Linking.openURL(update.source_url);
+    } catch {
+      // ignore malformed URL
     }
   }
 
@@ -87,7 +91,6 @@ function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
     userId,
   );
 
-  // Don't flash "Sign in" while the session is still being read
   if (authLoading) return null;
 
   if (!userId) {
@@ -129,11 +132,19 @@ export function EventDetailScreen({ route, navigation }: Props) {
   const { userId, loading: authLoading } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
-  // Set the header title to the event title once loaded
+  // Dynamic header: event title + sign-out button
   useEffect(() => {
-    if (event?.title) {
-      navigation.setOptions({ title: event.title });
-    }
+    navigation.setOptions({
+      title: event?.title ?? 'Event Detail',
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => supabase.auth.signOut()}
+          style={styles.signOutBtn}
+        >
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+      ),
+    });
   }, [event?.title, navigation]);
 
   async function handleRefresh() {
@@ -153,7 +164,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color="#fff" />
       </View>
     );
   }
@@ -173,19 +184,26 @@ export function EventDetailScreen({ route, navigation }: Props) {
 
   return (
     <FlatList
+      style={styles.screen}
       data={updates}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <UpdateItem update={item} />}
       contentContainerStyle={styles.list}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#8e8e93"
+        />
       }
       ListHeaderComponent={
         <View style={styles.header}>
           <Text style={styles.title}>{event.title}</Text>
           <View style={styles.meta}>
             <Text style={styles.metaText}>{event.status}</Text>
+            <Text style={styles.metaDot}>·</Text>
             <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
+            <Text style={styles.metaDot}>·</Text>
             <Text style={styles.metaText}>{sourceLabel}</Text>
           </View>
 
@@ -208,11 +226,16 @@ export function EventDetailScreen({ route, navigation }: Props) {
 // ── Styles ────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#0d0d0d',
+  },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
+    backgroundColor: '#0d0d0d',
   },
   list: {
     padding: 16,
@@ -223,24 +246,30 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    marginBottom: 6,
+    color: '#f2f2f2',
+    marginBottom: 8,
   },
   meta: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    gap: 6,
     marginBottom: 16,
     flexWrap: 'wrap',
   },
   metaText: {
-    fontSize: 14,
-    color: '#555',
+    fontSize: 13,
+    color: '#8e8e93',
+  },
+  metaDot: {
+    fontSize: 13,
+    color: '#3a3a3c',
   },
   signalSection: {
     marginBottom: 20,
   },
   signalGate: {
     fontSize: 13,
-    color: '#888',
+    color: '#8e8e93',
   },
   signalButtons: {
     flexDirection: 'row',
@@ -250,41 +279,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#3a3a3c',
     borderRadius: 6,
   },
   signalBtnActive: {
-    backgroundColor: '#333',
+    backgroundColor: '#f2f2f2',
+    borderColor: '#f2f2f2',
   },
   signalBtnText: {
     fontSize: 14,
-    color: '#333',
+    color: '#8e8e93',
   },
   signalBtnTextActive: {
-    color: '#fff',
+    color: '#0d0d0d',
   },
   signalError: {
     marginTop: 6,
     fontSize: 12,
-    color: '#c00',
+    color: '#ff453a',
   },
   sectionLabel: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
+    color: '#aeaeb2',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ccc',
-    paddingBottom: 6,
+    borderBottomColor: '#2c2c2e',
+    paddingBottom: 8,
   },
   updateItem: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#2c2c2e',
   },
   updateSource: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#444',
-    marginBottom: 2,
+    color: '#aeaeb2',
+    marginBottom: 4,
   },
   updateSourceLink: {
     color: '#0a84ff',
@@ -292,30 +323,41 @@ const styles = StyleSheet.create({
   },
   updateContent: {
     fontSize: 15,
-    marginBottom: 4,
+    color: '#f2f2f2',
+    lineHeight: 22,
+    marginBottom: 6,
   },
   updateDate: {
     fontSize: 11,
-    color: '#999',
+    color: '#636366',
   },
   emptyText: {
     fontSize: 14,
-    color: '#888',
+    color: '#8e8e93',
     marginTop: 12,
   },
   errorText: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#f2f2f2',
     marginBottom: 16,
   },
   retryButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#3a3a3c',
     borderRadius: 6,
   },
   retryText: {
     fontSize: 14,
+    color: '#f2f2f2',
+  },
+  signOutBtn: {
+    marginRight: 4,
+  },
+  signOutText: {
+    fontSize: 14,
+    color: '#ff453a',
   },
 });

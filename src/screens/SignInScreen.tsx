@@ -107,6 +107,7 @@ export function SignInScreen() {
           value={email}
           onChangeText={(v) => { setEmail(v); setError(null); }}
           placeholder="Email address"
+          placeholderTextColor="#636366"
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
@@ -119,6 +120,7 @@ export function SignInScreen() {
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
           placeholder="Password (min. 6 characters)"
+          placeholderTextColor="#636366"
           secureTextEntry={true}
           autoCapitalize="none"
           autoCorrect={false}
@@ -135,7 +137,7 @@ export function SignInScreen() {
           disabled={!!busy}
         >
           {loading === 'signIn'
-            ? <ActivityIndicator color="#fff" size="small" />
+            ? <ActivityIndicator color="#0d0d0d" size="small" />
             : <Text style={styles.buttonText}>Sign In</Text>
           }
         </TouchableOpacity>
@@ -146,7 +148,7 @@ export function SignInScreen() {
           disabled={!!busy}
         >
           {loading === 'signUp'
-            ? <ActivityIndicator color="#111" size="small" />
+            ? <ActivityIndicator color="#f2f2f2" size="small" />
             : <Text style={styles.buttonSecondaryText}>Sign Up</Text>
           }
         </TouchableOpacity>
@@ -158,7 +160,7 @@ export function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0d0d0d',
   },
   form: {
     flexGrow: 1,
@@ -170,58 +172,60 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    backgroundColor: '#fff',
+    backgroundColor: '#0d0d0d',
   },
   title: {
     fontSize: 26,
     fontWeight: '700',
+    color: '#f2f2f2',
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 15,
-    color: '#666',
+    color: '#8e8e93',
     marginBottom: 28,
     lineHeight: 22,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 6,
+    borderColor: '#3a3a3c',
+    borderRadius: 8,
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 13,
     fontSize: 15,
     marginBottom: 12,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#1c1c1e',
+    color: '#f2f2f2',
   },
   error: {
     fontSize: 13,
-    color: '#c00',
+    color: '#ff453a',
     marginBottom: 12,
   },
   button: {
-    backgroundColor: '#111',
-    borderRadius: 6,
-    paddingVertical: 13,
+    backgroundColor: '#f2f2f2',
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
     marginBottom: 10,
   },
   buttonSecondary: {
     borderWidth: 1,
-    borderColor: '#111',
-    borderRadius: 6,
-    paddingVertical: 13,
+    borderColor: '#3a3a3c',
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   buttonDisabled: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   buttonText: {
-    color: '#fff',
+    color: '#0d0d0d',
     fontSize: 15,
     fontWeight: '600',
   },
   buttonSecondaryText: {
-    color: '#111',
+    color: '#f2f2f2',
     fontSize: 15,
     fontWeight: '600',
   },
@@ -230,7 +234,7 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: '#555',
+    color: '#8e8e93',
     textDecorationLine: 'underline',
   },
 });
