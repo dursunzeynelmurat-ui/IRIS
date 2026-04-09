@@ -125,6 +125,11 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
         />
       </View>
 
+      {/* Source count */}
+      <Text style={styles.sourceCount}>
+        {event.source_count === 1 ? '1 source' : `${event.source_count} sources`}
+      </Text>
+
       {/* Signal buttons */}
       <View style={styles.actions}>
         {voteButton('confirm')}
@@ -237,5 +242,10 @@ const styles = StyleSheet.create({
   },
   btnFaded: {
     opacity: 0.3,
+  },
+  sourceCount: {
+    fontSize: 11,
+    color: '#636366',
+    marginBottom: 10,
   },
 });

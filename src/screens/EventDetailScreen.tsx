@@ -1,7 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useEffect } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Linking,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -25,9 +27,25 @@ function formatDate(iso: string): string {
 // ── Sub-components ────────────────────────────────────────────
 
 function UpdateItem({ update }: { update: EventUpdate }) {
+  const hasLink = !!update.source_url;
+
+  function openLink() {
+    if (update.source_url) {
+      Linking.openURL(update.source_url).catch(() => {/* ignore */});
+    }
+  }
+
   return (
     <View style={styles.updateItem}>
-      <Text style={styles.updateSource}>{update.source_name}</Text>
+      {hasLink ? (
+        <TouchableOpacity onPress={openLink} activeOpacity={0.7}>
+          <Text style={[styles.updateSource, styles.updateSourceLink]}>
+            {update.source_name} ↗
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        <Text style={styles.updateSource}>{update.source_name}</Text>
+      )}
       <Text style={styles.updateContent}>{update.content}</Text>
       <Text style={styles.updateDate}>{formatDate(update.created_at)}</Text>
     </View>
@@ -104,10 +122,17 @@ function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
 
 // ── Main screen ───────────────────────────────────────────────
 
-export function EventDetailScreen({ route }: Props) {
+export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
   const { event, updates, loading, error, refetch } = useEventDetail(eventId ?? '');
   const { userId, loading: authLoading } = useAuth();
+
+  // Set the header title to the event title once loaded
+  useEffect(() => {
+    if (event?.title) {
+      navigation.setOptions({ title: event.title });
+    }
+  }, [event?.title, navigation]);
 
   if (!eventId) {
     return (
@@ -136,6 +161,8 @@ export function EventDetailScreen({ route }: Props) {
     );
   }
 
+  const sourceLabel = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
+
   return (
     <FlatList
       data={updates}
@@ -148,6 +175,7 @@ export function EventDetailScreen({ route }: Props) {
           <View style={styles.meta}>
             <Text style={styles.metaText}>{event.status}</Text>
             <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
+            <Text style={styles.metaText}>{sourceLabel}</Text>
           </View>
 
           <SignalSection
@@ -190,6 +218,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 16,
+    flexWrap: 'wrap',
   },
   metaText: {
     fontSize: 14,
@@ -245,6 +274,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#444',
     marginBottom: 2,
+  },
+  updateSourceLink: {
+    color: '#0a84ff',
+    textDecorationLine: 'underline',
   },
   updateContent: {
     fontSize: 15,
