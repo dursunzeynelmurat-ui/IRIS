@@ -105,9 +105,17 @@ function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
 // ── Main screen ───────────────────────────────────────────────
 
 export function EventDetailScreen({ route }: Props) {
-  const { eventId } = route.params;
-  const { event, updates, loading, error, refetch } = useEventDetail(eventId);
+  const eventId = route.params?.eventId;
+  const { event, updates, loading, error, refetch } = useEventDetail(eventId ?? '');
   const { userId, loading: authLoading } = useAuth();
+
+  if (!eventId) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>Unable to load event.</Text>
+      </View>
+    );
+  }
 
   if (loading) {
     return (

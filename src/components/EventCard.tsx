@@ -46,8 +46,9 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
     userId,
   );
 
-  const statusColor = STATUS_COLOR[event.status] ?? '#888';
-  const barColor    = scoreColor(event.trust_score);
+  const statusColor  = STATUS_COLOR[event.status] ?? '#888';
+  const trustScore   = event.trust_score ?? 50;
+  const barColor     = scoreColor(trustScore);
 
   function voteButton(type: SignalType) {
     const isConfirm  = type === 'confirm';
@@ -108,7 +109,7 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
         <Text style={styles.scoreLabel}>
           Trust{' '}
           <Text style={[styles.scoreValue, { color: barColor }]}>
-            {event.trust_score}
+            {trustScore}
           </Text>
           <Text style={styles.scoreMax}>/100</Text>
         </Text>
@@ -119,7 +120,7 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
         <View
           style={[
             styles.scoreBarFill,
-            { width: `${event.trust_score}%`, backgroundColor: barColor },
+            { width: `${trustScore}%`, backgroundColor: barColor },
           ]}
         />
       </View>

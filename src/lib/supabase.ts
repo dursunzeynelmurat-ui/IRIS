@@ -41,14 +41,16 @@ const SecureStoreAdapter = {
       await SecureStore.setItemAsync(key, value);
       return;
     }
+    // Write all chunks first, then commit the count.
+    // A reader seeing `${key}.n` can trust all chunk keys are present.
     const total = Math.ceil(value.length / CHUNK_SIZE);
-    await SecureStore.setItemAsync(`${key}.n`, String(total));
     for (let i = 0; i < total; i++) {
       await SecureStore.setItemAsync(
         `${key}.${i}`,
         value.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
       );
     }
+    await SecureStore.setItemAsync(`${key}.n`, String(total));
   },
 
   async removeItem(key: string): Promise<void> {

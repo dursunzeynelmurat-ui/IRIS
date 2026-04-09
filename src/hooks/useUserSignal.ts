@@ -25,6 +25,8 @@ export function useUserSignal(
       return;
     }
 
+    let mounted = true;
+
     supabase
       .from('signals')
       .select('type')
@@ -32,12 +34,15 @@ export function useUserSignal(
       .eq('user_id', userId)
       .maybeSingle()
       .then(({ data, error: dbError }) => {
+        if (!mounted) return;
         if (dbError) {
           console.error('[useUserSignal] fetch:', dbError);
-          return; // non-critical; buttons still render, signal just defaults to null
+          return;
         }
         setCurrentSignal((data?.type as SignalType) ?? null);
       });
+
+    return () => { mounted = false; };
   }, [eventId, userId]);
 
   async function submitSignal(type: SignalType) {

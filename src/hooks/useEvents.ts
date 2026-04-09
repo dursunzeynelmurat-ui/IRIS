@@ -52,7 +52,9 @@ export function useEvents(): UseEventsResult {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'events' },
         (payload) => {
-          const updated = payload.new as Event;
+          const incoming = payload.new;
+          if (!incoming || typeof incoming !== 'object' || !('id' in incoming)) return;
+          const updated = incoming as Event;
           setEvents((prev) =>
             prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e)),
           );

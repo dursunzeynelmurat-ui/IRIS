@@ -33,8 +33,7 @@ export function HomeScreen() {
           console.error('[HomeScreen] fetch error:', error);
           setState({ status: 'error', message: error.message });
         } else {
-          console.log('[HomeScreen] fetched', data?.length ?? 0, 'events');
-          setState({ status: 'success', events: data ?? [] });
+setState({ status: 'success', events: data ?? [] });
         }
       });
   }, []);

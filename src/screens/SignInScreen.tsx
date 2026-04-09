@@ -23,6 +23,7 @@ export function SignInScreen() {
 
   function validate(): string | null {
     if (!email.trim())    return 'Please enter your email address.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Please enter a valid email address.';
     if (!password)        return 'Please enter a password.';
     if (password.length < 6) return 'Password must be at least 6 characters.';
     return null;

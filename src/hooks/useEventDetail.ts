@@ -58,7 +58,9 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` },
         (payload) => {
-          setEvent((prev) => (prev ? { ...prev, ...(payload.new as Event) } : prev));
+          const incoming = payload.new;
+          if (!incoming || typeof incoming !== 'object' || !('id' in incoming)) return;
+          setEvent((prev) => (prev ? { ...prev, ...(incoming as Event) } : prev));
         },
       )
       .subscribe();
@@ -70,7 +72,9 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'event_updates', filter: `event_id=eq.${eventId}` },
         (payload) => {
-          const incoming = payload.new as EventUpdate;
+          const raw = payload.new;
+          if (!raw || typeof raw !== 'object' || !('id' in raw)) return;
+          const incoming = raw as EventUpdate;
           setUpdates((prev) => {
             // Guard: don't add if already present (e.g. overlap with a refetch)
             if (prev.some((u) => u.id === incoming.id)) return prev;

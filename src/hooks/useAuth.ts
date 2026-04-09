@@ -11,7 +11,8 @@ export function useAuth(): UseAuthResult {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) console.error('[useAuth] getSession:', error);
       setUserId(data.session?.user.id ?? null);
       setLoading(false);
     });
@@ -20,7 +21,7 @@ export function useAuth(): UseAuthResult {
       setUserId(session?.user.id ?? null);
     });
 
-    return () => listener.subscription.unsubscribe();
+    return () => listener?.subscription?.unsubscribe();
   }, []);
 
   return { userId, loading };
