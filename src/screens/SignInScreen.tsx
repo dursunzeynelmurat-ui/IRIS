@@ -109,7 +109,7 @@ export function SignInScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!busy}
+          editable={!!(!busy)}
           returnKeyType="next"
         />
 
@@ -121,7 +121,7 @@ export function SignInScreen() {
           secureTextEntry={true}
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!busy}
+          editable={!!(!busy)}
           returnKeyType="done"
           onSubmitEditing={handleSignIn}
         />
@@ -129,9 +129,9 @@ export function SignInScreen() {
         {error && <Text style={styles.error}>{error}</Text>}
 
         <TouchableOpacity
-          style={[styles.button, busy && styles.buttonDisabled]}
+          style={[styles.button, !!busy && styles.buttonDisabled]}
           onPress={handleSignIn}
-          disabled={busy}
+          disabled={!!busy}
         >
           {loading === 'signIn'
             ? <ActivityIndicator color="#fff" size="small" />
@@ -140,9 +140,9 @@ export function SignInScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.buttonSecondary, busy && styles.buttonDisabled]}
+          style={[styles.buttonSecondary, !!busy && styles.buttonDisabled]}
           onPress={handleSignUp}
-          disabled={busy}
+          disabled={!!busy}
         >
           {loading === 'signUp'
             ? <ActivityIndicator color="#111" size="small" />

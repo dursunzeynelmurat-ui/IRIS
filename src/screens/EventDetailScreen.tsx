@@ -45,9 +45,9 @@ interface SignalButtonProps {
 function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
   return (
     <TouchableOpacity
-      style={[styles.signalBtn, active && styles.signalBtnActive]}
+      style={[styles.signalBtn, !!active && styles.signalBtnActive]}
       onPress={onPress}
-      disabled={disabled}
+      disabled={!!disabled}
     >
       <Text style={[styles.signalBtnText, active && styles.signalBtnTextActive]}>
         {label}
@@ -85,15 +85,15 @@ function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
         <SignalButton
           label="Confirm"
           type="confirm"
-          active={currentSignal === 'confirm'}
-          disabled={submitting}
+          active={!!(currentSignal === 'confirm')}
+          disabled={!!submitting}
           onPress={() => submitSignal('confirm')}
         />
         <SignalButton
           label="Dispute"
           type="dispute"
-          active={currentSignal === 'dispute'}
-          disabled={submitting}
+          active={!!(currentSignal === 'dispute')}
+          disabled={!!submitting}
           onPress={() => submitSignal('dispute')}
         />
       </View>
