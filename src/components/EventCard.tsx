@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { formatRelativeTime } from '../lib/formatRelativeTime';
 import { useUserSignal } from '../hooks/useUserSignal';
 import { Event, EventStatus, SignalType } from '../types';
 
@@ -125,10 +126,13 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
         />
       </View>
 
-      {/* Source count */}
-      <Text style={styles.sourceCount}>
-        {event.source_count === 1 ? '1 source' : `${event.source_count} sources`}
-      </Text>
+      {/* Source count + age */}
+      <View style={styles.cardFooter}>
+        <Text style={styles.sourceCount}>
+          {event.source_count === 1 ? '1 source' : `${event.source_count} sources`}
+        </Text>
+        <Text style={styles.cardAge}>{formatRelativeTime(event.created_at)}</Text>
+      </View>
 
       {/* Signal buttons */}
       <View style={styles.actions}>
@@ -243,9 +247,17 @@ const styles = StyleSheet.create({
   btnFaded: {
     opacity: 0.3,
   },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
   sourceCount: {
     fontSize: 11,
     color: '#636366',
-    marginBottom: 10,
+  },
+  cardAge: {
+    fontSize: 11,
+    color: '#636366',
   },
 });

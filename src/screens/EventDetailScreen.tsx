@@ -1,9 +1,10 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Linking,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -126,6 +127,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
   const { event, updates, loading, error, refetch } = useEventDetail(eventId ?? '');
   const { userId, loading: authLoading } = useAuth();
+  const [refreshing, setRefreshing] = useState(false);
 
   // Set the header title to the event title once loaded
   useEffect(() => {
@@ -133,6 +135,12 @@ export function EventDetailScreen({ route, navigation }: Props) {
       navigation.setOptions({ title: event.title });
     }
   }, [event?.title, navigation]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }
 
   if (!eventId) {
     return (
@@ -169,6 +177,9 @@ export function EventDetailScreen({ route, navigation }: Props) {
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <UpdateItem update={item} />}
       contentContainerStyle={styles.list}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+      }
       ListHeaderComponent={
         <View style={styles.header}>
           <Text style={styles.title}>{event.title}</Text>

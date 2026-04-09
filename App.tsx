@@ -2,6 +2,7 @@ import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
@@ -31,20 +32,22 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer theme={DarkTheme}>
-      <StatusBar style="light" />
-      <Stack.Navigator>
-        <Stack.Screen
-          name="EventList"
-          component={EventListScreen}
-          options={{ title: 'IRIS' }}
-        />
-        <Stack.Screen
-          name="EventDetail"
-          component={EventDetailScreen}
-          options={{ title: 'Event Detail' }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <ErrorBoundary>
+      <NavigationContainer theme={DarkTheme}>
+        <StatusBar style="light" />
+        <Stack.Navigator>
+          <Stack.Screen
+            name="EventList"
+            component={EventListScreen}
+            options={{ title: 'IRIS' }}
+          />
+          <Stack.Screen
+            name="EventDetail"
+            component={EventDetailScreen}
+            options={{ title: 'Event Detail' }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </ErrorBoundary>
   );
 }
