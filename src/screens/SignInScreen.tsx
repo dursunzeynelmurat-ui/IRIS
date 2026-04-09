@@ -118,7 +118,7 @@ export function SignInScreen() {
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
           placeholder="Password (min. 6 characters)"
-          secureTextEntry
+          secureTextEntry={true}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!busy}
