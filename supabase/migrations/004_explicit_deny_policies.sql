@@ -23,8 +23,9 @@ CREATE POLICY "deny_events_delete" ON events
   USING (false);
 
 -- ── event_updates ─────────────────────────────────────────────────────────
--- Authenticated users may INSERT event_updates (ingestion RLS allowance).
--- Nobody should UPDATE or DELETE existing updates.
+-- event_updates are managed by the ingestion script (service-role key, bypasses RLS).
+-- No authenticated end-user should UPDATE or DELETE updates.
+-- INSERT for authenticated users is blocked separately by migration 005.
 
 CREATE POLICY "deny_event_updates_update" ON event_updates
   AS RESTRICTIVE FOR UPDATE TO authenticated

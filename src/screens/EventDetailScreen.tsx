@@ -81,25 +81,16 @@ function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
 
 interface SignalSectionProps {
   eventId: string;
-  userId: string | null;
-  authLoading: boolean;
+  // userId is always non-null here: App.tsx only renders the navigator when
+  // userId !== null, so EventDetailScreen is unreachable while unauthenticated.
+  userId: string;
 }
 
-function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
+function SignalSection({ eventId, userId }: SignalSectionProps) {
   const { currentSignal, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
   );
-
-  if (authLoading) return null;
-
-  if (!userId) {
-    return (
-      <View style={styles.signalSection}>
-        <Text style={styles.signalGate}>Sign in to send a signal.</Text>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.signalSection}>
@@ -129,7 +120,7 @@ function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
 export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
   const { event, updates, loading, error, refetch } = useEventDetail(eventId ?? '');
-  const { userId, loading: authLoading } = useAuth();
+  const { userId } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
   // Dynamic header: event title + sign-out button
@@ -207,11 +198,12 @@ export function EventDetailScreen({ route, navigation }: Props) {
             <Text style={styles.metaText}>{sourceLabel}</Text>
           </View>
 
-          <SignalSection
-            eventId={event.id}
-            userId={userId}
-            authLoading={authLoading}
-          />
+          {userId && (
+            <SignalSection
+              eventId={event.id}
+              userId={userId}
+            />
+          )}
 
           <Text style={styles.sectionLabel}>Timeline</Text>
         </View>
@@ -266,10 +258,6 @@ const styles = StyleSheet.create({
   },
   signalSection: {
     marginBottom: 20,
-  },
-  signalGate: {
-    fontSize: 13,
-    color: '#8e8e93',
   },
   signalButtons: {
     flexDirection: 'row',
