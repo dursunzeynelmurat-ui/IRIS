@@ -7,6 +7,7 @@ import { supabase } from './src/lib/supabase';
 import { useAuth } from './src/hooks/useAuth';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
+import { HomeScreen } from './src/screens/HomeScreen';
 import { SignInScreen } from './src/screens/SignInScreen';
 import type { RootStackParamList } from './src/types/navigation';
 
@@ -64,8 +65,8 @@ export default function App() {
       <Stack.Navigator>
         <Stack.Screen
           name="EventList"
-          component={EventListScreen}
-          options={{ title: 'Events' }}
+          component={HomeScreen}        // Phase 2 test — swap back to EventListScreen when done
+          options={{ title: 'IRIS — Connection Test' }}
         />
         <Stack.Screen
           name="EventDetail"
