@@ -1,3 +1,4 @@
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   ActivityIndicator,
   FlatList,
@@ -8,6 +9,9 @@ import {
 } from 'react-native';
 import { useEvents } from '../hooks/useEvents';
 import { Event, EventStatus } from '../types';
+import type { RootStackParamList } from '../types/navigation';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'EventList'>;
 
 const STATUS_LABEL: Record<EventStatus, string> = {
   emerging:   'Emerging',
@@ -16,19 +20,19 @@ const STATUS_LABEL: Record<EventStatus, string> = {
   disputed:   'Disputed',
 };
 
-function EventItem({ event }: { event: Event }) {
+function EventItem({ event, onPress }: { event: Event; onPress: () => void }) {
   return (
-    <View style={styles.item}>
+    <TouchableOpacity style={styles.item} onPress={onPress}>
       <Text style={styles.title}>{event.title}</Text>
       <View style={styles.meta}>
-        <Text style={styles.status}>{STATUS_LABEL[event.status]}</Text>
-        <Text style={styles.trust}>Trust: {event.trust_score}/100</Text>
+        <Text style={styles.metaText}>{STATUS_LABEL[event.status]}</Text>
+        <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
-export function EventListScreen() {
+export function EventListScreen({ navigation }: Props) {
   const { events, loading, error, refetch } = useEvents();
 
   if (loading) {
@@ -55,7 +59,12 @@ export function EventListScreen() {
     <FlatList
       data={events}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <EventItem event={item} />}
+      renderItem={({ item }) => (
+        <EventItem
+          event={item}
+          onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
+        />
+      )}
       contentContainerStyle={events.length === 0 ? styles.centered : styles.list}
       ListHeaderComponent={<Text style={styles.header}>Events</Text>}
       ListEmptyComponent={
@@ -94,11 +103,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
-  status: {
-    fontSize: 13,
-    color: '#555',
-  },
-  trust: {
+  metaText: {
     fontSize: 13,
     color: '#555',
   },
