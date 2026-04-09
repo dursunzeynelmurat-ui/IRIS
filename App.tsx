@@ -2,6 +2,7 @@ import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
+import { AuthProvider } from './src/context/AuthContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
@@ -11,7 +12,11 @@ import type { RootStackParamList } from './src/types/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-export default function App() {
+/**
+ * AppContent renders the auth-gated navigation tree.
+ * It consumes auth state from AuthContext — no new Supabase subscription.
+ */
+function AppContent() {
   const { userId, loading } = useAuth();
 
   if (loading) {
@@ -49,5 +54,17 @@ export default function App() {
         </Stack.Navigator>
       </NavigationContainer>
     </ErrorBoundary>
+  );
+}
+
+/**
+ * App is the true root. AuthProvider lives here so the single
+ * onAuthStateChange subscription covers the entire component tree.
+ */
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

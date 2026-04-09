@@ -45,9 +45,9 @@ export function useEvents(): UseEventsResult {
   useEffect(() => {
     fetchEvents();
 
-    // Live updates: when trust_score or status changes, reflect instantly
     const channel = supabase
       .channel('events-feed')
+      // Patch existing events (trust_score, status changes)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'events' },
@@ -58,6 +58,20 @@ export function useEvents(): UseEventsResult {
           setEvents((prev) =>
             prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e)),
           );
+        },
+      )
+      // Prepend new events as they arrive from the ingestion script
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'events' },
+        (payload) => {
+          const incoming = payload.new;
+          if (!incoming || typeof incoming !== 'object' || !('id' in incoming)) return;
+          const newEvent = incoming as Event;
+          setEvents((prev) => {
+            if (prev.some((e) => e.id === newEvent.id)) return prev; // dedup guard
+            return [newEvent, ...prev]; // list is newest-first
+          });
         },
       )
       .subscribe();

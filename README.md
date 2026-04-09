@@ -117,10 +117,12 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
 
 | Table | Read | Write |
 |---|---|---|
-| `events` | Public | — |
-| `event_updates` | Public | Authenticated users (INSERT only) |
+| `events` | Public | — (service role only via ingestion script) |
+| `event_updates` | Public | — (service role only via ingestion script) |
 | `signals` | Own rows only | Own rows only (INSERT, UPDATE, DELETE) |
-| `users` | Own row only | — |
+| `users` | Own row only | — (created by trigger on auth.users INSERT) |
+
+> **Security note:** Migrations 004 and 005 add `RESTRICTIVE` deny policies on `events`, `event_updates`, and `users` for the `authenticated` role. These are ANDed with all permissive policies — no future accidental permissive policy can re-open a write path. The ingestion script uses the service-role key which bypasses RLS and is unaffected.
 
 ---
 
@@ -160,7 +162,7 @@ Events are skipped if:
 | Framework | React Native (Expo) |
 | Language | TypeScript (strict mode) |
 | Backend client | `@supabase/supabase-js` |
-| Session storage | `@react-native-async-storage/async-storage` |
+| Session storage | `expo-secure-store` (chunked adapter; disabled in Expo Go — see §15) |
 | Navigation | `@react-navigation/native-stack` |
 
 ### Folder Structure
@@ -170,12 +172,14 @@ src/
 ├── components/
 │   ├── ErrorBoundary.tsx    # Top-level crash recovery boundary
 │   └── EventCard.tsx        # Card with vote buttons (uses useUserSignal)
+├── context/
+│   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
 ├── lib/
 │   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
 │   └── supabase.ts          # Supabase client (env-var validated, chunked SecureStore)
 ├── hooks/
-│   ├── useAuth.ts           # Session state + loading
-│   ├── useEvents.ts         # Event list fetch + realtime + pull-to-refresh
+│   ├── useAuth.ts           # Re-export from AuthContext (no subscription)
+│   ├── useEvents.ts         # Event list fetch + realtime (UPDATE + INSERT)
 │   ├── useEventDetail.ts    # Event + updates fetch + realtime
 │   └── useUserSignal.ts     # Signal fetch + upsert via signalService
 ├── screens/
@@ -192,7 +196,9 @@ supabase/
 ├── migrations/
 │   ├── 001_initial_schema.sql
 │   ├── 002_recalculate_trust_score.sql
-│   └── 003_fix_source_count_trigger.sql
+│   ├── 003_fix_source_count_trigger.sql
+│   ├── 004_explicit_deny_policies.sql
+│   └── 005_deny_event_updates_insert.sql
 └── seed/
     └── ingest.ts
 ```
@@ -210,13 +216,14 @@ supabase/
 
 ## 8. Auth System
 
-### `useAuth` Hook
+### `AuthProvider` + `useAuth`
 
-Returns `{ userId: string | null, loading: boolean }`.
+Auth state lives in a single `AuthContext` (`src/context/AuthContext.tsx`).
 
-- Reads session on mount via `getSession()`
-- Subscribes to `onAuthStateChange` for live updates
-- `loading: true` until session is resolved — prevents UI flicker
+- `AuthProvider` wraps the entire app in `App.tsx` — creates **one** `getSession()` call and **one** `onAuthStateChange` subscription for the app's entire lifetime
+- `useAuth()` is a thin context consumer — calling it in any screen does **not** create additional subscriptions
+- Returns `{ userId: string | null, loading: boolean }`
+- `loading: true` until session is resolved — prevents auth flicker
 
 ### App-level Auth Gate (`App.tsx`)
 
@@ -438,6 +445,8 @@ cp .env.example .env
 supabase/migrations/001_initial_schema.sql
 supabase/migrations/002_recalculate_trust_score.sql
 supabase/migrations/003_fix_source_count_trigger.sql
+supabase/migrations/004_explicit_deny_policies.sql
+supabase/migrations/005_deny_event_updates_insert.sql
 ```
 
 **4. Enable Realtime** in Supabase Dashboard → Database → Replication:
