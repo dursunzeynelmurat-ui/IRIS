@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Environment variables — never commit real secrets
+.env
+.env.local
+
+# OS
+.DS_Store
