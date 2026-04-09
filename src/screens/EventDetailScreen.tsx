@@ -15,6 +15,13 @@ import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
+// ── Helpers ───────────────────────────────────────────────────
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
 // ── Sub-components ────────────────────────────────────────────
 
 function UpdateItem({ update }: { update: EventUpdate }) {
@@ -22,25 +29,47 @@ function UpdateItem({ update }: { update: EventUpdate }) {
     <View style={styles.updateItem}>
       <Text style={styles.updateSource}>{update.source_name}</Text>
       <Text style={styles.updateContent}>{update.content}</Text>
-      <Text style={styles.updateDate}>
-        {new Date(update.created_at).toLocaleString()}
-      </Text>
+      <Text style={styles.updateDate}>{formatDate(update.created_at)}</Text>
     </View>
+  );
+}
+
+interface SignalButtonProps {
+  label: string;
+  type: SignalType;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}
+
+function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.signalBtn, active && styles.signalBtnActive]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={[styles.signalBtnText, active && styles.signalBtnTextActive]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
 interface SignalSectionProps {
   eventId: string;
   userId: string | null;
-  onScoreUpdated: () => void;
+  authLoading: boolean;
 }
 
-function SignalSection({ eventId, userId, onScoreUpdated }: SignalSectionProps) {
+function SignalSection({ eventId, userId, authLoading }: SignalSectionProps) {
   const { currentSignal, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
-    onScoreUpdated,
   );
+
+  // Don't flash "Sign in" while the session is still being read
+  if (authLoading) return null;
 
   if (!userId) {
     return (
@@ -73,34 +102,12 @@ function SignalSection({ eventId, userId, onScoreUpdated }: SignalSectionProps) 
   );
 }
 
-interface SignalButtonProps {
-  label: string;
-  type: SignalType;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-}
-
-function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
-  return (
-    <TouchableOpacity
-      style={[styles.signalBtn, active && styles.signalBtnActive]}
-      onPress={onPress}
-      disabled={disabled}
-    >
-      <Text style={[styles.signalBtnText, active && styles.signalBtnTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 // ── Main screen ───────────────────────────────────────────────
 
 export function EventDetailScreen({ route }: Props) {
   const { eventId } = route.params;
   const { event, updates, loading, error, refetch } = useEventDetail(eventId);
-  const { userId } = useAuth();
+  const { userId, loading: authLoading } = useAuth();
 
   if (loading) {
     return (
@@ -113,8 +120,7 @@ export function EventDetailScreen({ route }: Props) {
   if (error || !event) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Failed to load event.</Text>
-        {error && <Text style={styles.errorDetail}>{error}</Text>}
+        <Text style={styles.errorText}>Unable to load event.</Text>
         <TouchableOpacity style={styles.retryButton} onPress={refetch}>
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
@@ -139,7 +145,7 @@ export function EventDetailScreen({ route }: Props) {
           <SignalSection
             eventId={event.id}
             userId={userId}
-            onScoreUpdated={refetch}
+            authLoading={authLoading}
           />
 
           <Text style={styles.sectionLabel}>Timeline</Text>
@@ -248,13 +254,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 4,
-  },
-  errorDetail: {
-    fontSize: 13,
-    color: '#888',
     marginBottom: 16,
-    textAlign: 'center',
   },
   retryButton: {
     paddingHorizontal: 20,

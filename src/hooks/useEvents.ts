@@ -18,13 +18,14 @@ export function useEvents(): UseEventsResult {
     setLoading(true);
     setError(null);
 
-    const { data, error: supabaseError } = await supabase
+    const { data, error: dbError } = await supabase
       .from('events')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (supabaseError) {
-      setError(supabaseError.message);
+    if (dbError) {
+      console.error('[useEvents]', dbError);
+      setError('Unable to load events. Please try again.');
     } else {
       setEvents(data ?? []);
     }

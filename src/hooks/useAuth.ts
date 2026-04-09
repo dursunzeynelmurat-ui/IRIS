@@ -3,18 +3,19 @@ import { supabase } from '../lib/supabase';
 
 interface UseAuthResult {
   userId: string | null;
+  loading: boolean;
 }
 
 export function useAuth(): UseAuthResult {
   const [userId, setUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Read current session synchronously on mount
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
+      setLoading(false);
     });
 
-    // Stay in sync if the user signs in or out elsewhere
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user.id ?? null);
     });
@@ -22,5 +23,5 @@ export function useAuth(): UseAuthResult {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  return { userId };
+  return { userId, loading };
 }

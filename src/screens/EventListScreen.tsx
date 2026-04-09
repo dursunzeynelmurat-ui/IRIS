@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useEffect } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -7,7 +8,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { supabase } from '../lib/supabase';
 import { useEvents } from '../hooks/useEvents';
+import { useAuth } from '../hooks/useAuth';
 import { Event, EventStatus } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -20,12 +23,16 @@ const STATUS_LABEL: Record<EventStatus, string> = {
   disputed:   'Disputed',
 };
 
+function statusLabel(status: string): string {
+  return STATUS_LABEL[status as EventStatus] ?? status;
+}
+
 function EventItem({ event, onPress }: { event: Event; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.item} onPress={onPress}>
       <Text style={styles.title}>{event.title}</Text>
       <View style={styles.meta}>
-        <Text style={styles.metaText}>{STATUS_LABEL[event.status]}</Text>
+        <Text style={styles.metaText}>{statusLabel(event.status)}</Text>
         <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
       </View>
     </TouchableOpacity>
@@ -34,6 +41,22 @@ function EventItem({ event, onPress }: { event: Event; onPress: () => void }) {
 
 export function EventListScreen({ navigation }: Props) {
   const { events, loading, error, refetch } = useEvents();
+  const { userId } = useAuth();
+
+  // Add Sign Out button to the native header when signed in
+  useEffect(() => {
+    if (!userId) return;
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => supabase.auth.signOut()}
+          style={styles.signOutBtn}
+        >
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, userId]);
 
   if (loading) {
     return (
@@ -46,8 +69,7 @@ export function EventListScreen({ navigation }: Props) {
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Failed to load events.</Text>
-        <Text style={styles.errorDetail}>{error}</Text>
+        <Text style={styles.errorText}>Unable to load events.</Text>
         <TouchableOpacity style={styles.retryButton} onPress={refetch}>
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
@@ -110,13 +132,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 4,
-  },
-  errorDetail: {
-    fontSize: 13,
-    color: '#888',
     marginBottom: 16,
-    textAlign: 'center',
   },
   retryButton: {
     paddingHorizontal: 20,
@@ -131,5 +147,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 15,
     color: '#888',
+  },
+  signOutBtn: {
+    marginRight: 12,
+  },
+  signOutText: {
+    fontSize: 14,
+    color: '#c00',
   },
 });

@@ -12,13 +12,12 @@ interface UseUserSignalResult {
 export function useUserSignal(
   eventId: string,
   userId: string | null,
-  onScoreUpdated: () => void,
 ): UseUserSignalResult {
   const [currentSignal, setCurrentSignal] = useState<SignalType | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch the user's existing signal for this event
+  // Fetch the user's existing signal when userId is known
   useEffect(() => {
     if (!userId) {
       setCurrentSignal(null);
@@ -31,21 +30,25 @@ export function useUserSignal(
       .eq('event_id', eventId)
       .eq('user_id', userId)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error: dbError }) => {
+        if (dbError) {
+          console.error('[useUserSignal] fetch:', dbError);
+          return; // non-critical; buttons still render, signal just defaults to null
+        }
         setCurrentSignal((data?.type as SignalType) ?? null);
       });
   }, [eventId, userId]);
 
   async function submitSignal(type: SignalType) {
     if (!userId) return;
+    // No-op: user tapped the already-active button
+    if (type === currentSignal) return;
 
     const previous = currentSignal;
     setCurrentSignal(type); // optimistic update
     setSubmitting(true);
     setError(null);
 
-    // Upsert: INSERT on first signal, UPDATE on subsequent ones.
-    // onConflict matches the UNIQUE(user_id, event_id) constraint.
     const { error: upsertError } = await supabase
       .from('signals')
       .upsert(
@@ -54,23 +57,25 @@ export function useUserSignal(
       );
 
     if (upsertError) {
+      console.error('[useUserSignal] upsert:', upsertError);
       setCurrentSignal(previous); // revert optimistic update
-      setError(upsertError.message);
+      setError('Could not save signal. Please try again.');
       setSubmitting(false);
       return;
     }
 
-    // Recalculate trust score server-side (Step 6)
+    // Recalculate trust score server-side.
+    // The realtime channel in useEventDetail will pick up the resulting
+    // events.trust_score UPDATE automatically — no manual refetch needed.
     const { error: rpcError } = await supabase.rpc('recalculate_trust_score', {
       p_event_id: eventId,
     });
 
     if (rpcError) {
-      // Signal was saved correctly; only score update failed — non-critical
-      setError(`Signal saved, but score update failed: ${rpcError.message}`);
+      // Signal saved; only score recalc failed — non-fatal, log it
+      console.error('[useUserSignal] recalculate_trust_score:', rpcError);
     }
 
-    onScoreUpdated(); // tell the caller to refresh the event header
     setSubmitting(false);
   }
 
