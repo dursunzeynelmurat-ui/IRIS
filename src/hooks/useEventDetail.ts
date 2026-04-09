@@ -21,11 +21,7 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
     setError(null);
 
     const [eventResult, updatesResult] = await Promise.all([
-      supabase
-        .from('events')
-        .select('*')
-        .eq('id', eventId)
-        .single(),
+      supabase.from('events').select('*').eq('id', eventId).single(),
       supabase
         .from('event_updates')
         .select('*')
@@ -50,8 +46,48 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
     setLoading(false);
   }
 
+  // Step 7 — Realtime subscriptions
   useEffect(() => {
     fetchDetail();
+
+    // Channel 1: listen for trust_score (and any field) changes on this event row
+    const eventChannel = supabase
+      .channel(`event-${eventId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'events',
+          filter: `id=eq.${eventId}`,
+        },
+        (payload) => {
+          setEvent((prev) => (prev ? { ...prev, ...(payload.new as Event) } : prev));
+        },
+      )
+      .subscribe();
+
+    // Channel 2: listen for new event_updates (timeline entries)
+    const updatesChannel = supabase
+      .channel(`event-updates-${eventId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'event_updates',
+          filter: `event_id=eq.${eventId}`,
+        },
+        (payload) => {
+          setUpdates((prev) => [...prev, payload.new as EventUpdate]);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(eventChannel);
+      supabase.removeChannel(updatesChannel);
+    };
   }, [eventId]);
 
   return { event, updates, loading, error, refetch: fetchDetail };

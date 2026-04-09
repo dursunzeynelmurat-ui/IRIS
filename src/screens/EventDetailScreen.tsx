@@ -7,11 +7,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
-import { EventUpdate } from '../types';
+import { useUserSignal } from '../hooks/useUserSignal';
+import { EventUpdate, SignalType } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
+
+// ── Sub-components ────────────────────────────────────────────
 
 function UpdateItem({ update }: { update: EventUpdate }) {
   return (
@@ -25,9 +29,78 @@ function UpdateItem({ update }: { update: EventUpdate }) {
   );
 }
 
+interface SignalSectionProps {
+  eventId: string;
+  userId: string | null;
+  onScoreUpdated: () => void;
+}
+
+function SignalSection({ eventId, userId, onScoreUpdated }: SignalSectionProps) {
+  const { currentSignal, submitting, error, submitSignal } = useUserSignal(
+    eventId,
+    userId,
+    onScoreUpdated,
+  );
+
+  if (!userId) {
+    return (
+      <View style={styles.signalSection}>
+        <Text style={styles.signalGate}>Sign in to send a signal.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.signalSection}>
+      <View style={styles.signalButtons}>
+        <SignalButton
+          label="Confirm"
+          type="confirm"
+          active={currentSignal === 'confirm'}
+          disabled={submitting}
+          onPress={() => submitSignal('confirm')}
+        />
+        <SignalButton
+          label="Dispute"
+          type="dispute"
+          active={currentSignal === 'dispute'}
+          disabled={submitting}
+          onPress={() => submitSignal('dispute')}
+        />
+      </View>
+      {error && <Text style={styles.signalError}>{error}</Text>}
+    </View>
+  );
+}
+
+interface SignalButtonProps {
+  label: string;
+  type: SignalType;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}
+
+function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.signalBtn, active && styles.signalBtnActive]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={[styles.signalBtnText, active && styles.signalBtnTextActive]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────
+
 export function EventDetailScreen({ route }: Props) {
   const { eventId } = route.params;
   const { event, updates, loading, error, refetch } = useEventDetail(eventId);
+  const { userId } = useAuth();
 
   if (loading) {
     return (
@@ -62,6 +135,13 @@ export function EventDetailScreen({ route }: Props) {
             <Text style={styles.metaText}>{event.status}</Text>
             <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
           </View>
+
+          <SignalSection
+            eventId={event.id}
+            userId={userId}
+            onScoreUpdated={refetch}
+          />
+
           <Text style={styles.sectionLabel}>Timeline</Text>
         </View>
       }
@@ -71,6 +151,8 @@ export function EventDetailScreen({ route }: Props) {
     />
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   centered: {
@@ -93,11 +175,44 @@ const styles = StyleSheet.create({
   meta: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   metaText: {
     fontSize: 14,
     color: '#555',
+  },
+  signalSection: {
+    marginBottom: 20,
+  },
+  signalGate: {
+    fontSize: 13,
+    color: '#888',
+  },
+  signalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  signalBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 6,
+  },
+  signalBtnActive: {
+    backgroundColor: '#333',
+  },
+  signalBtnText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  signalBtnTextActive: {
+    color: '#fff',
+  },
+  signalError: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#c00',
   },
   sectionLabel: {
     fontSize: 16,
