@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { castSignal } from '../services/signalService';
 import { supabase } from '../lib/supabase';
 import { SignalType } from '../types';
 
@@ -49,31 +50,14 @@ export function useUserSignal(
     setSubmitting(true);
     setError(null);
 
-    const { error: upsertError } = await supabase
-      .from('signals')
-      .upsert(
-        { user_id: userId, event_id: eventId, type },
-        { onConflict: 'user_id,event_id' },
-      );
-
-    if (upsertError) {
-      console.error('[useUserSignal] upsert:', upsertError);
+    try {
+      await castSignal(userId, eventId, type);
+    } catch (err) {
+      console.error('[useUserSignal] castSignal:', err);
       setCurrentSignal(previous); // revert optimistic update
       setError('Could not save signal. Please try again.');
       setSubmitting(false);
       return;
-    }
-
-    // Recalculate trust score server-side.
-    // The realtime channel in useEventDetail will pick up the resulting
-    // events.trust_score UPDATE automatically — no manual refetch needed.
-    const { error: rpcError } = await supabase.rpc('recalculate_trust_score', {
-      p_event_id: eventId,
-    });
-
-    if (rpcError) {
-      // Signal saved; only score recalc failed — non-fatal, log it
-      console.error('[useUserSignal] recalculate_trust_score:', rpcError);
     }
 
     setSubmitting(false);

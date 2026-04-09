@@ -167,17 +167,21 @@ Events are skipped if:
 
 ```
 src/
+├── components/
+│   └── EventCard.tsx        # Card with vote buttons (uses useUserSignal)
 ├── lib/
 │   └── supabase.ts          # Supabase client (env-var validated)
 ├── hooks/
 │   ├── useAuth.ts           # Session state + loading
-│   ├── useEvents.ts         # Event list fetch
+│   ├── useEvents.ts         # Event list fetch + realtime + pull-to-refresh
 │   ├── useEventDetail.ts    # Event + updates fetch + realtime
-│   └── useUserSignal.ts     # Signal fetch + upsert + RPC
+│   └── useUserSignal.ts     # Signal fetch + upsert via signalService
 ├── screens/
 │   ├── SignInScreen.tsx
 │   ├── EventListScreen.tsx
 │   └── EventDetailScreen.tsx
+├── services/
+│   └── signalService.ts     # castSignal(userId, eventId, type) — upsert + RPC
 └── types/
     ├── index.ts             # DB types: Event, EventUpdate, Signal, User
     └── navigation.ts        # RootStackParamList
@@ -185,7 +189,8 @@ src/
 supabase/
 ├── migrations/
 │   ├── 001_initial_schema.sql
-│   └── 002_recalculate_trust_score.sql
+│   ├── 002_recalculate_trust_score.sql
+│   └── 003_fix_source_count_trigger.sql
 └── seed/
     └── ingest.ts
 ```
@@ -221,11 +226,13 @@ Three-state conditional render:
 | `userId === null` | `SignInScreen` (outside navigator) |
 | `userId` set | `NavigationContainer` + stack |
 
-### Sign In
+### Sign In / Sign Up
 
-- Email-based magic link via `supabase.auth.signInWithOtp`
-- `shouldCreateUser: true` (auto-creates account on first sign-in)
-- UI states: input form → loading → "Check your email"
+- Email + password via `supabase.auth.signInWithPassword` and `supabase.auth.signUp`
+- Separate **Sign In** and **Sign Up** buttons on the same form
+- Inline validation: non-empty fields, password ≥ 6 characters
+- Sign Up flow: confirmation email sent → "Check your email" screen → back to sign in
+- UI states: form → per-button loading spinner → error inline / confirmation screen
 
 ### Sign Out
 
@@ -240,7 +247,10 @@ Three-state conditional render:
 ### `useEvents`
 
 - Fetches all events, ordered `created_at DESC`
-- Exposes: `{ events, loading, error, refetch }`
+- Exposes: `{ events, loading, refreshing, error, refetch }`
+- `loading` is `true` only on the initial fetch (shows full-screen spinner)
+- `refreshing` is `true` on pull-to-refresh (FlatList native spinner)
+- Realtime channel `events-feed` updates cards live on `events` UPDATE
 - Error messages sanitized (raw DB errors never shown to user)
 
 ### `useEventDetail`
@@ -254,48 +264,66 @@ Three-state conditional render:
 
 ## 10. Realtime System
 
-Both subscriptions live inside `useEventDetail` and are scoped to a single `eventId`.
+### Event List — `useEvents` channel
 
-### Channel 1 — `events` row
+```
+event: 'UPDATE', table: 'events'   (no filter — all events)
+```
+Channel name: `events-feed`. When any event's `trust_score` or `status` changes,
+the matching card in the FlatList updates instantly without a refetch.
 
+### Event Detail — `useEventDetail` channels
+
+Two subscriptions, both scoped to a single `eventId`.
+
+**Channel `event-{id}`**
 ```
 event: 'UPDATE', table: 'events', filter: id=eq.{eventId}
 ```
-Patches the local `event` state with incoming fields (primarily `trust_score`).
+Patches the local `event` state (primarily `trust_score`).
 
-### Channel 2 — `event_updates` rows
-
+**Channel `event-updates-{id}`**
 ```
 event: 'INSERT', table: 'event_updates', filter: event_id=eq.{eventId}
 ```
-Appends new timeline entries. **Deduplicated by `id`** — ignores entries already present in state (guards against refetch/subscription overlap).
+Appends new timeline entries. **Deduplicated by `id`** — ignores entries already present (guards against refetch/subscription overlap).
 
 ### Cleanup
 
-Both channels removed via `supabase.removeChannel()` on component unmount.
+All channels removed via `supabase.removeChannel()` on component unmount.
 
 ### Trust Score Update Path
 
-Signal submitted → RPC updates `events.trust_score` in DB → realtime UPDATE fires → Channel 1 patches UI. No manual refetch needed after signal submission.
+Signal submitted → `castSignal` calls RPC → `events.trust_score` updated in DB
+→ Realtime UPDATE fires → both list card and detail header patch automatically.
+No manual refetch needed.
 
 ---
 
 ## 11. Signal System
 
+### `signalService.castSignal(userId, eventId, type)`
+
+Low-level service function. Performs two operations:
+1. Upsert into `signals` with `onConflict: 'user_id,event_id'` (allows vote changes)
+2. Calls `recalculate_trust_score` RPC on success
+
+Throws on upsert failure. RPC failure is non-fatal (logged, signal is saved).
+
 ### `useUserSignal(eventId, userId)`
 
 Returns `{ currentSignal, submitting, error, submitSignal }`.
 
-**On mount:** fetches existing signal via `.maybeSingle()` (null if none).
+**On mount:** fetches existing signal from DB via `.maybeSingle()`.
+Used by both `EventCard` (list screen) and `EventDetailScreen`.
 
 **On `submitSignal(type)`:**
 
 1. Guard: `if (type === currentSignal) return` — prevents no-op DB call
 2. Optimistic update: `setCurrentSignal(type)`
-3. Upsert to `signals` with `onConflict: 'user_id,event_id'`
-4. On upsert error: revert optimistic update, set sanitized error message
-5. On success: call `recalculate_trust_score` RPC
-6. Realtime picks up the resulting `trust_score` change automatically
+3. Calls `castSignal(userId, eventId, type)`
+4. On error: reverts optimistic update, sets sanitized error message
+5. Realtime picks up the resulting `trust_score` change automatically
 
 **Guards:**
 - `submitting` flag blocks concurrent submissions
@@ -314,8 +342,9 @@ Returns `{ currentSignal, submitting, error, submitSignal }`.
 | Empty | "No events yet." |
 | Data | `FlatList` of event rows |
 
-Each row: title, status (with unknown-value fallback), trust score.  
-Header: Sign Out button (when signed in).
+Each card: title, colored status badge, trust score bar, Confirm/Dispute buttons.  
+Vote state loaded from DB on mount; selected button fills solid, other fades.  
+Pull-to-refresh supported. Header: Sign Out button (when signed in).
 
 ### Event Detail Screen
 
@@ -406,6 +435,7 @@ cp .env.example .env
 ```
 supabase/migrations/001_initial_schema.sql
 supabase/migrations/002_recalculate_trust_score.sql
+supabase/migrations/003_fix_source_count_trigger.sql
 ```
 
 **4. Enable Realtime** in Supabase Dashboard → Database → Replication:
@@ -429,14 +459,21 @@ npx expo start
 
 ### Implemented
 
-- Event feed (list + detail)
-- Timeline updates (chronological)
-- User signaling (confirm / dispute, upsert)
-- Trust score calculation (server-side Postgres RPC)
-- Realtime synchronization (trust score + timeline)
-- Authentication (email magic link)
+- Event feed (list + detail) with dark UI design system
+- EventCard: status badge, trust score bar (color-coded), Confirm/Dispute buttons
+- Pull-to-refresh on event list
+- Timeline updates (chronological, per event)
+- User signaling (confirm / dispute) on both list cards and detail screen
+  - Vote state fetched from DB on mount — persists across navigation
+  - Optimistic update with revert on failure
+- Trust score calculation (server-side Postgres RPC — atomic, race-safe)
+- Realtime synchronization:
+  - List screen: `events-feed` channel patches trust score on any event UPDATE
+  - Detail screen: two channels for event UPDATE + event_updates INSERT
+- Authentication (email + password via `signInWithPassword` / `signUp`)
+- Sign Out header button
 - Ingestion script with duplicate guard (15 seed events included)
-- Production hardening: sanitized errors, auth loading state, realtime dedup, no-op signal guard
+- Production hardening: sanitized errors, auth loading guard, realtime dedup, signal no-op guard
 
 ### Not Implemented
 
@@ -444,7 +481,7 @@ npx expo start
 - Rate limiting or abuse protection
 - Offline support
 - Analytics tracking
-- Advanced ingestion (AI-assisted, scraping)
+- Advanced ingestion (AI-assisted, scraping, fuzzy dedup)
 - Reputation or source weighting systems
-- UI polish / design system
 - Automated moderation
+- Push notifications

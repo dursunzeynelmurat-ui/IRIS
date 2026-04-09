@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -6,7 +5,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { castSignal } from '../services/signalService';
+import { useUserSignal } from '../hooks/useUserSignal';
 import { Event, EventStatus, SignalType } from '../types';
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -40,30 +39,52 @@ interface EventCardProps {
 }
 
 export function EventCard({ event, userId, onPress }: EventCardProps) {
-  const [userVote, setUserVote]   = useState<SignalType | null>(null);
-  const [sending, setSending]     = useState(false);
+  // useUserSignal fetches the existing vote from DB on mount, so vote state
+  // survives navigation — it's not just ephemeral local state.
+  const { currentSignal, submitting, submitSignal } = useUserSignal(
+    event.id,
+    userId,
+  );
 
   const statusColor = STATUS_COLOR[event.status] ?? '#888';
   const barColor    = scoreColor(event.trust_score);
-  const voted       = userVote !== null;
 
-  // Both buttons lock once a vote is cast (or while one is in flight)
-  const buttonsLocked = voted || sending || !userId;
+  function voteButton(type: SignalType) {
+    const isConfirm  = type === 'confirm';
+    const isSelected = currentSignal === type;
+    const isOther    = currentSignal !== null && currentSignal !== type;
 
-  async function handleVote(type: SignalType) {
-    // Prevent double-vote and no-op on re-tap of same button
-    if (!userId || voted || sending) return;
-
-    setSending(true);
-    try {
-      await castSignal(userId, event.id, type);
-      setUserVote(type);
-    } catch (err) {
-      console.error('[EventCard] vote failed:', err);
-      // Buttons recover — no vote recorded locally
-    } finally {
-      setSending(false);
-    }
+    return (
+      <TouchableOpacity
+        style={[
+          styles.actionBtn,
+          isConfirm
+            ? isSelected ? styles.confirmActive : styles.confirmIdle
+            : isSelected ? styles.disputeActive  : styles.disputeIdle,
+          isOther && styles.btnFaded,
+        ]}
+        onPress={() => submitSignal(type)}
+        // Disable the already-selected button and both while submitting
+        disabled={!!(isSelected || submitting || !userId)}
+        activeOpacity={0.8}
+      >
+        {submitting && isSelected ? (
+          <ActivityIndicator
+            size="small"
+            color={isConfirm ? '#30d158' : '#ff453a'}
+          />
+        ) : (
+          <Text
+            style={[
+              styles.actionText,
+              isSelected && (isConfirm ? styles.confirmActiveText : styles.disputeActiveText),
+            ]}
+          >
+            {isConfirm ? '✓  Confirm' : '✗  Dispute'}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
   }
 
   return (
@@ -105,55 +126,8 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
 
       {/* Signal buttons */}
       <View style={styles.actions}>
-        {/* Confirm */}
-        <TouchableOpacity
-          style={[
-            styles.actionBtn,
-            userVote === 'confirm' ? styles.confirmActive : styles.confirmIdle,
-            buttonsLocked && userVote !== 'confirm' && styles.btnFaded,
-          ]}
-          onPress={() => handleVote('confirm')}
-          disabled={!!(buttonsLocked && userVote !== 'confirm')}
-          activeOpacity={0.8}
-        >
-          {sending && userVote === null ? (
-            <ActivityIndicator size="small" color="#30d158" />
-          ) : (
-            <Text
-              style={[
-                styles.actionText,
-                userVote === 'confirm' && styles.confirmActiveText,
-              ]}
-            >
-              ✓  Confirm
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Dispute */}
-        <TouchableOpacity
-          style={[
-            styles.actionBtn,
-            userVote === 'dispute' ? styles.disputeActive : styles.disputeIdle,
-            buttonsLocked && userVote !== 'dispute' && styles.btnFaded,
-          ]}
-          onPress={() => handleVote('dispute')}
-          disabled={!!(buttonsLocked && userVote !== 'dispute')}
-          activeOpacity={0.8}
-        >
-          {sending && userVote === null ? (
-            <ActivityIndicator size="small" color="#ff453a" />
-          ) : (
-            <Text
-              style={[
-                styles.actionText,
-                userVote === 'dispute' && styles.disputeActiveText,
-              ]}
-            >
-              ✗  Dispute
-            </Text>
-          )}
-        </TouchableOpacity>
+        {voteButton('confirm')}
+        {voteButton('dispute')}
       </View>
     </TouchableOpacity>
   );
@@ -233,8 +207,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 36,
   },
-
-  // Confirm — idle (outlined) vs active (filled)
   confirmIdle: {
     borderColor: '#30d158',
     backgroundColor: 'transparent',
@@ -243,8 +215,6 @@ const styles = StyleSheet.create({
     borderColor: '#30d158',
     backgroundColor: '#30d158',
   },
-
-  // Dispute — idle (outlined) vs active (filled)
   disputeIdle: {
     borderColor: '#ff453a',
     backgroundColor: 'transparent',
@@ -253,12 +223,10 @@ const styles = StyleSheet.create({
     borderColor: '#ff453a',
     backgroundColor: '#ff453a',
   },
-
-  // Text
   actionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#8e8e93',  // muted until voted
+    color: '#8e8e93',
   },
   confirmActiveText: {
     color: '#fff',
@@ -266,8 +234,6 @@ const styles = StyleSheet.create({
   disputeActiveText: {
     color: '#fff',
   },
-
-  // Dim the un-selected button after voting
   btnFaded: {
     opacity: 0.3,
   },

@@ -1,21 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Event } from '../types';
 
 interface UseEventsResult {
   events: Event[];
-  loading: boolean;
+  loading: boolean;      // true only on the initial fetch (shows full-screen spinner)
+  refreshing: boolean;   // true on pull-to-refresh (shows FlatList spinner)
   error: string | null;
   refetch: () => void;
 }
 
 export function useEvents(): UseEventsResult {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [events, setEvents]       = useState<Event[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const initialLoad               = useRef(true);
 
   async function fetchEvents() {
-    setLoading(true);
+    if (initialLoad.current) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setError(null);
 
     const { data, error: dbError } = await supabase
@@ -31,12 +38,14 @@ export function useEvents(): UseEventsResult {
     }
 
     setLoading(false);
+    setRefreshing(false);
+    initialLoad.current = false;
   }
 
   useEffect(() => {
     fetchEvents();
 
-    // Live updates: when trust_score or status changes, reflect it instantly
+    // Live updates: when trust_score or status changes, reflect instantly
     const channel = supabase
       .channel('events-feed')
       .on(
@@ -45,9 +54,9 @@ export function useEvents(): UseEventsResult {
         (payload) => {
           const updated = payload.new as Event;
           setEvents((prev) =>
-            prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e))
+            prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e)),
           );
-        }
+        },
       )
       .subscribe();
 
@@ -56,5 +65,5 @@ export function useEvents(): UseEventsResult {
     };
   }, []);
 
-  return { events, loading, error, refetch: fetchEvents };
+  return { events, loading, refreshing, error, refetch: fetchEvents };
 }

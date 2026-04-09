@@ -17,7 +17,7 @@ import type { RootStackParamList } from '../types/navigation';
 type Props = NativeStackScreenProps<RootStackParamList, 'EventList'>;
 
 export function EventListScreen({ navigation }: Props) {
-  const { events, loading, error, refetch } = useEvents();
+  const { events, loading, refreshing, error, refetch } = useEvents();
   const { userId } = useAuth();
 
   useEffect(() => {
@@ -68,6 +68,8 @@ export function EventListScreen({ navigation }: Props) {
       contentContainerStyle={
         events.length === 0 ? styles.centered : styles.listContent
       }
+      refreshing={!!refreshing}
+      onRefresh={refetch}
       ListEmptyComponent={<Text style={styles.emptyText}>No events yet.</Text>}
       ItemSeparatorComponent={() => <View style={styles.separator} />}
     />
