@@ -35,6 +35,25 @@ export function useEvents(): UseEventsResult {
 
   useEffect(() => {
     fetchEvents();
+
+    // Live updates: when trust_score or status changes, reflect it instantly
+    const channel = supabase
+      .channel('events-feed')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'events' },
+        (payload) => {
+          const updated = payload.new as Event;
+          setEvents((prev) =>
+            prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e))
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   return { events, loading, error, refetch: fetchEvents };
