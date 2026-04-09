@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,81 +12,144 @@ import {
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 
+type LoadingAction = 'signIn' | 'signUp' | null;
+
 export function SignInScreen() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading]   = useState<LoadingAction>(null);
+  const [error, setError]       = useState<string | null>(null);
+  const [signedUp, setSignedUp] = useState(false);
 
-  async function handleSendLink() {
-    const trimmed = email.trim();
-    if (!trimmed) {
-      setError('Please enter your email address.');
-      return;
-    }
+  function validate(): string | null {
+    if (!email.trim())    return 'Please enter your email address.';
+    if (!password)        return 'Please enter a password.';
+    if (password.length < 6) return 'Password must be at least 6 characters.';
+    return null;
+  }
 
-    setLoading(true);
+  async function handleSignIn() {
+    const err = validate();
+    if (err) { setError(err); return; }
+
+    setLoading('signIn');
     setError(null);
 
-    const { error: authError } = await supabase.auth.signInWithOtp({
-      email: trimmed,
-      options: { shouldCreateUser: true },
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
     });
 
     if (authError) {
       console.error('[SignIn]', authError);
-      setError('Could not send sign-in link. Please try again.');
-    } else {
-      setSent(true);
+      setError('Invalid email or password. Please try again.');
     }
+    // On success: onAuthStateChange fires → useAuth updates userId → App.tsx
+    // renders the main stack automatically. No manual navigation needed.
 
-    setLoading(false);
+    setLoading(null);
   }
 
-  if (sent) {
+  async function handleSignUp() {
+    const err = validate();
+    if (err) { setError(err); return; }
+
+    setLoading('signUp');
+    setError(null);
+
+    const { error: authError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+    });
+
+    if (authError) {
+      console.error('[SignUp]', authError);
+      setError('Could not create account. Please try again.');
+    } else {
+      setSignedUp(true);
+    }
+
+    setLoading(null);
+  }
+
+  if (signedUp) {
     return (
       <View style={styles.centered}>
         <Text style={styles.title}>Check your email</Text>
         <Text style={styles.subtitle}>
-          A sign-in link was sent to {email.trim()}.
+          A confirmation link was sent to {email.trim()}.{'\n'}
+          Confirm your account, then sign in.
         </Text>
-        <TouchableOpacity onPress={() => setSent(false)} style={styles.link}>
-          <Text style={styles.linkText}>Use a different email</Text>
+        <TouchableOpacity onPress={() => setSignedUp(false)} style={styles.link}>
+          <Text style={styles.linkText}>Back to Sign In</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  const busy = loading !== null;
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.form}>
+      <ScrollView
+        contentContainerStyle={styles.form}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>IRIS</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
+        <Text style={styles.subtitle}>Sign in or create an account</Text>
+
         <TextInput
           style={styles.input}
           value={email}
           onChangeText={(v) => { setEmail(v); setError(null); }}
-          placeholder="you@example.com"
+          placeholder="Email address"
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!loading}
+          editable={!busy}
+          returnKeyType="next"
         />
+
+        <TextInput
+          style={styles.input}
+          value={password}
+          onChangeText={(v) => { setPassword(v); setError(null); }}
+          placeholder="Password (min. 6 characters)"
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!busy}
+          returnKeyType="done"
+          onSubmitEditing={handleSignIn}
+        />
+
         {error && <Text style={styles.error}>{error}</Text>}
+
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSendLink}
-          disabled={loading}
+          style={[styles.button, busy && styles.buttonDisabled]}
+          onPress={handleSignIn}
+          disabled={busy}
         >
-          {loading
+          {loading === 'signIn'
             ? <ActivityIndicator color="#fff" size="small" />
-            : <Text style={styles.buttonText}>Send Sign-in Link</Text>
+            : <Text style={styles.buttonText}>Sign In</Text>
           }
         </TouchableOpacity>
-      </View>
+
+        <TouchableOpacity
+          style={[styles.buttonSecondary, busy && styles.buttonDisabled]}
+          onPress={handleSignUp}
+          disabled={busy}
+        >
+          {loading === 'signUp'
+            ? <ActivityIndicator color="#111" size="small" />
+            : <Text style={styles.buttonSecondaryText}>Sign Up</Text>
+          }
+        </TouchableOpacity>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -96,7 +160,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   form: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 32,
   },
@@ -116,6 +180,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#666',
     marginBottom: 28,
+    lineHeight: 22,
   },
   input: {
     borderWidth: 1,
@@ -124,25 +189,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 11,
     fontSize: 15,
-    marginBottom: 10,
+    marginBottom: 12,
+    backgroundColor: '#fafafa',
   },
   error: {
     fontSize: 13,
     color: '#c00',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   button: {
     backgroundColor: '#111',
     borderRadius: 6,
     paddingVertical: 13,
     alignItems: 'center',
-    marginTop: 4,
+    marginBottom: 10,
+  },
+  buttonSecondary: {
+    borderWidth: 1,
+    borderColor: '#111',
+    borderRadius: 6,
+    paddingVertical: 13,
+    alignItems: 'center',
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   buttonText: {
     color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  buttonSecondaryText: {
+    color: '#111',
     fontSize: 15,
     fontWeight: '600',
   },
