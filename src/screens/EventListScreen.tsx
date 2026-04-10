@@ -12,6 +12,7 @@ import {
 import { EventCard } from '../components/EventCard';
 import { useAuth } from '../hooks/useAuth';
 import { useEvents } from '../hooks/useEvents';
+import { useUserSignals } from '../hooks/useUserSignals';
 import { supabase } from '../lib/supabase';
 import { EventStatus } from '../types';
 import type { RootStackParamList } from '../types/navigation';
@@ -38,6 +39,8 @@ const FILTER_COLOR: Record<EventStatus, string> = {
 export function EventListScreen({ navigation }: Props) {
   const { events, loading, refreshing, error, refetch } = useEvents();
   const { userId } = useAuth();
+  // One bulk fetch instead of per-card queries (eliminates N+1)
+  const { signalMap, setSignal } = useUserSignals(userId);
   const [activeFilter, setActiveFilter] = useState<FilterOption>('all');
 
   useEffect(() => {
@@ -117,7 +120,9 @@ export function EventListScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <EventCard
             event={item}
-            userId={userId}
+            userId={userId!}
+            initialSignal={signalMap.get(item.id) ?? null}
+            onSignalCast={(type) => setSignal(item.id, type)}
             onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
           />
         )}

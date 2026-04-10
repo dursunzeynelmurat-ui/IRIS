@@ -2,12 +2,17 @@ import { supabase } from '../lib/supabase';
 import type { SignalType } from '../types';
 
 /**
- * Upserts a user signal for an event, then recalculates the trust score
- * server-side via RPC. The Realtime channel in useEvents picks up the
- * resulting trust_score UPDATE automatically — no manual refresh needed.
+ * Upserts a user signal for an event.
  *
- * RLS requires the authenticated user's real ID; a mock/hardcoded ID
- * would be rejected by the `auth.uid() = user_id` policy.
+ * trust_score is recalculated automatically by the DB trigger
+ * `signals_sync_trust_score` (migration 006), which fires after every
+ * INSERT or UPDATE on signals. No client-side RPC call is needed.
+ *
+ * The Realtime channel in useEvents picks up the resulting events UPDATE
+ * automatically — no manual refresh needed.
+ *
+ * RLS requires the authenticated user's real ID; a wrong ID would be
+ * rejected by the `auth.uid() = user_id` policy on signals.
  */
 export async function castSignal(
   userId: string,
@@ -22,13 +27,5 @@ export async function castSignal(
     );
 
   if (error) throw error;
-
-  const { error: rpcError } = await supabase.rpc('recalculate_trust_score', {
-    p_event_id: eventId,
-  });
-
-  if (rpcError) {
-    // Non-fatal: signal saved. Score corrects on next fetch.
-    console.error('[castSignal] recalculate_trust_score:', rpcError);
-  }
+  // Trust score is recalculated atomically by the DB trigger on signals.
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -6,7 +7,7 @@ import {
   View,
 } from 'react-native';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { useUserSignal } from '../hooks/useUserSignal';
+import { castSignal } from '../services/signalService';
 import { Event, EventStatus, SignalType } from '../types';
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -35,21 +36,45 @@ function scoreColor(score: number): string {
 
 interface EventCardProps {
   event: Event;
-  userId: string | null;
+  userId: string;               // always non-null — list screen is auth-gated
+  initialSignal: SignalType | null; // pre-seeded by bulk fetch in EventListScreen
+  onSignalCast: (type: SignalType) => void; // notifies parent to keep map current
   onPress: () => void;
 }
 
-export function EventCard({ event, userId, onPress }: EventCardProps) {
-  // useUserSignal fetches the existing vote from DB on mount, so vote state
-  // survives navigation — it's not just ephemeral local state.
-  const { currentSignal, submitting, submitSignal } = useUserSignal(
-    event.id,
-    userId,
-  );
+export function EventCard({
+  event,
+  userId,
+  initialSignal,
+  onSignalCast,
+  onPress,
+}: EventCardProps) {
+  // Signal state is seeded from the bulk fetch — no per-card DB query.
+  const [currentSignal, setCurrentSignal] = useState<SignalType | null>(initialSignal);
+  const [submitting, setSubmitting] = useState(false);
 
-  const statusColor  = STATUS_COLOR[event.status] ?? '#888';
-  const trustScore   = event.trust_score ?? 50;
-  const barColor     = scoreColor(trustScore);
+  const statusColor = STATUS_COLOR[event.status] ?? '#888';
+  const trustScore  = event.trust_score ?? 50;
+  const barColor    = scoreColor(trustScore);
+
+  async function submitSignal(type: SignalType) {
+    if (type === currentSignal) return; // no-op: already active
+    if (submitting) return;
+
+    const previous = currentSignal;
+    setCurrentSignal(type); // optimistic update
+    setSubmitting(true);
+
+    try {
+      await castSignal(userId, event.id, type);
+      onSignalCast(type); // keep parent map current for remount consistency
+    } catch (err) {
+      console.error('[EventCard] castSignal:', err);
+      setCurrentSignal(previous); // revert on failure
+    }
+
+    setSubmitting(false);
+  }
 
   function voteButton(type: SignalType) {
     const isConfirm  = type === 'confirm';
@@ -66,8 +91,7 @@ export function EventCard({ event, userId, onPress }: EventCardProps) {
           isOther && styles.btnFaded,
         ]}
         onPress={() => submitSignal(type)}
-        // Disable the already-selected button and both while submitting
-        disabled={!!(isSelected || submitting || !userId)}
+        disabled={!!(isSelected || submitting)}
         activeOpacity={0.8}
       >
         {submitting && isSelected ? (

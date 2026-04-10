@@ -92,9 +92,9 @@ IRIS performs the following functions:
 
 ## 3. Database Logic
 
-### Trust Score (RPC)
+### Trust Score (trigger-driven)
 
-Implemented as a Postgres function: `recalculate_trust_score(p_event_id UUID)`
+Implemented as a Postgres function `recalculate_trust_score(p_event_id UUID)` called automatically by the DB trigger `signals_sync_trust_score` (migration 006).
 
 ```sql
 trust_score = ROUND(confirms / (confirms + disputes) * 100)
@@ -102,8 +102,10 @@ trust_score = ROUND(confirms / (confirms + disputes) * 100)
 
 Rules:
 - If total signals = 0 → no update (divide-by-zero guard)
-- Score clamped 0–100
-- SELECT count + UPDATE run in one transaction (atomic, race-safe)
+- Score clamped 0–100 (belt-and-suspenders alongside the CHECK constraint on `events`)
+- Trigger fires `AFTER INSERT OR UPDATE ON signals` → function runs in the same transaction as the signal write — trust_score can never become stale silently
+
+**Why `SECURITY DEFINER`:** migration 004 added a RESTRICTIVE deny on `events UPDATE` for the `authenticated` role. Without `SECURITY DEFINER`, the function would run as the caller (authenticated user) and the UPDATE would be denied by RLS. With `SECURITY DEFINER` the function runs as its owner (postgres), which has BYPASSRLS. `SET search_path = public` is set on the function to prevent search-path injection (Supabase best practice).
 
 ### Source Count
 
@@ -135,9 +137,11 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
    ON CONFLICT (user_id, event_id)
    DO UPDATE SET type = EXCLUDED.type
    ```
-2. On success: client calls `recalculate_trust_score(event_id)` RPC
+2. DB trigger `signals_sync_trust_score` fires automatically → calls `recalculate_trust_score(event_id)` within the same transaction
 3. DB updates `events.trust_score`
 4. Realtime emits UPDATE → all subscribed clients update instantly
+
+No client-side RPC call is needed. `trust_score` is always in sync with signals.
 
 ### Ingestion Duplicate Guard
 
@@ -171,7 +175,7 @@ Events are skipped if:
 src/
 ├── components/
 │   ├── ErrorBoundary.tsx    # Top-level crash recovery boundary
-│   └── EventCard.tsx        # Card with vote buttons (uses useUserSignal)
+│   └── EventCard.tsx        # Card with vote buttons (signal state via props, no per-card fetch)
 ├── context/
 │   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
 ├── lib/
@@ -181,13 +185,14 @@ src/
 │   ├── useAuth.ts           # Re-export from AuthContext (no subscription)
 │   ├── useEvents.ts         # Event list fetch + realtime (UPDATE + INSERT)
 │   ├── useEventDetail.ts    # Event + updates fetch + realtime
-│   └── useUserSignal.ts     # Signal fetch + upsert via signalService
+│   ├── useUserSignal.ts     # Single-event signal fetch + upsert (EventDetailScreen)
+│   └── useUserSignals.ts    # Bulk signal fetch for all events (EventListScreen, one query)
 ├── screens/
 │   ├── SignInScreen.tsx
 │   ├── EventListScreen.tsx
 │   └── EventDetailScreen.tsx
 ├── services/
-│   └── signalService.ts     # castSignal(userId, eventId, type) — upsert + RPC
+│   └── signalService.ts     # castSignal(userId, eventId, type) — upsert only (trigger handles score)
 └── types/
     ├── index.ts             # DB types: Event, EventUpdate, Signal, User
     └── navigation.ts        # RootStackParamList
@@ -198,7 +203,8 @@ supabase/
 │   ├── 002_recalculate_trust_score.sql
 │   ├── 003_fix_source_count_trigger.sql
 │   ├── 004_explicit_deny_policies.sql
-│   └── 005_deny_event_updates_insert.sql
+│   ├── 005_deny_event_updates_insert.sql
+│   └── 006_signals_trust_score_trigger.sql
 └── seed/
     └── ingest.ts
 ```
@@ -269,6 +275,13 @@ Three-state conditional render:
 - Exposes: `{ event, updates, loading, error, refetch }`
 - Also manages realtime subscriptions (see §10)
 
+### `useUserSignals`
+
+- Fetches all signals for the current user in **one** query: `select event_id, type from signals where user_id = {userId}`
+- Returns `{ signalMap: Map<eventId, SignalType>, setSignal }`
+- Used by `EventListScreen` to seed each `EventCard` with its initial signal state — eliminates N+1 per-card queries
+- `setSignal(eventId, type)` keeps the map current after a submit, so a card that scrolls off and remounts receives the correct initial value
+
 ---
 
 ## 10. Realtime System
@@ -277,9 +290,9 @@ Three-state conditional render:
 
 ```
 event: 'UPDATE', table: 'events'   (no filter — all events)
+event: 'INSERT', table: 'events'   (no filter — prepends new events, deduplicated by id)
 ```
-Channel name: `events-feed`. When any event's `trust_score` or `status` changes,
-the matching card in the FlatList updates instantly without a refetch.
+Channel name: `events-feed`. When any event's `trust_score` or `status` changes the matching card updates instantly. New events inserted by the ingestion script appear at the top without a pull-to-refresh.
 
 ### Event Detail — `useEventDetail` channels
 
@@ -303,9 +316,7 @@ All channels removed via `supabase.removeChannel()` on component unmount.
 
 ### Trust Score Update Path
 
-Signal submitted → `castSignal` calls RPC → `events.trust_score` updated in DB
-→ Realtime UPDATE fires → both list card and detail header patch automatically.
-No manual refetch needed.
+Signal submitted → `castSignal` upserts signal → DB trigger `signals_sync_trust_score` fires → `recalculate_trust_score` updates `events.trust_score` atomically → Realtime UPDATE fires → both list card and detail header patch automatically. No manual refetch needed, no client-side RPC call.
 
 ---
 
@@ -313,18 +324,21 @@ No manual refetch needed.
 
 ### `signalService.castSignal(userId, eventId, type)`
 
-Low-level service function. Performs two operations:
+Low-level service function. Performs one operation:
 1. Upsert into `signals` with `onConflict: 'user_id,event_id'` (allows vote changes)
-2. Calls `recalculate_trust_score` RPC on success
 
-Throws on upsert failure. RPC failure is non-fatal (logged, signal is saved).
+Throws on upsert failure. Trust score is recalculated automatically by the DB trigger — no explicit RPC call needed or made.
 
-### `useUserSignal(eventId, userId)`
+### `useUserSignals(userId)` — list screen bulk fetch
+
+Fetches all signals for the current user in a single query. Returns a `Map<eventId, SignalType>` plus a `setSignal` updater. Used by `EventListScreen` to pass initial signal state to each card (one query total, not one per card).
+
+### `useUserSignal(eventId, userId)` — detail screen single fetch
 
 Returns `{ currentSignal, submitting, error, submitSignal }`.
 
 **On mount:** fetches existing signal from DB via `.maybeSingle()`.
-Used by both `EventCard` (list screen) and `EventDetailScreen`.
+Used only by `EventDetailScreen` (single-event context).
 
 **On `submitSignal(type)`:**
 
@@ -352,8 +366,8 @@ Used by both `EventCard` (list screen) and `EventDetailScreen`.
 | Data | `FlatList` of event rows |
 
 Each card: title, colored status badge, trust score bar, Confirm/Dispute buttons.  
-Vote state loaded from DB on mount; selected button fills solid, other fades.  
-Pull-to-refresh supported. Header: Sign Out button (when signed in).
+Vote state seeded from `useUserSignals` bulk fetch (one query for all cards); selected button fills solid, other fades.  
+Pull-to-refresh supported. Header: Sign Out button.
 
 ### Event Detail Screen
 
@@ -368,14 +382,9 @@ Timeline: source name, content, formatted timestamp (invalid date → `—`).
 
 ### Signal Section
 
-| Auth state | Renders |
-|---|---|
-| Auth still loading | Nothing (prevents flash) |
-| Not signed in | "Sign in to send a signal." |
-| Signed in | Confirm + Dispute buttons |
+Shown in the `EventDetailScreen` header. The screen is only reachable when authenticated (App.tsx auth gate), so `SignalSection` always renders the signed-in state:
 
-Active button: filled background. Both disabled while `submitting`.  
-Inline error shown below buttons on failure.
+Confirm + Dispute buttons side by side. Active button: filled background. Both disabled while `submitting`. Inline error shown below buttons on failure.
 
 ---
 
@@ -384,7 +393,7 @@ Inline error shown below buttons on failure.
 - Raw DB / Supabase error messages are never shown to users
 - User-facing messages: `"Unable to load events"`, `"Unable to load event"`, `"Could not save signal. Please try again."`
 - All raw errors logged via `console.error` with a `[hook-name]` prefix for tracing
-- RPC failure after successful upsert is treated as non-fatal (signal is saved; score update may be delayed until realtime catches up)
+- Signal submission failure reverts the optimistic update and shows the user-facing error message
 
 ---
 
@@ -395,6 +404,7 @@ Inline error shown below buttons on failure.
 - No global state library — no unnecessary re-renders from unrelated state
 - Queries are minimal (no overfetching — `select('*')` on small tables only)
 - Realtime channels scoped per event — no broadcast to unrelated screens
+- `useUserSignals` fetches all user signals in one query instead of one per card (eliminates N+1 on the list screen)
 
 ---
 
@@ -447,6 +457,7 @@ supabase/migrations/002_recalculate_trust_score.sql
 supabase/migrations/003_fix_source_count_trigger.sql
 supabase/migrations/004_explicit_deny_policies.sql
 supabase/migrations/005_deny_event_updates_insert.sql
+supabase/migrations/006_signals_trust_score_trigger.sql
 ```
 
 **4. Enable Realtime** in Supabase Dashboard → Database → Replication:
@@ -478,11 +489,12 @@ npx expo start
 - Dynamic navigation header title on EventDetail (shows event title once loaded)
 - Source count displayed on both EventCard and EventDetail header
 - User signaling (confirm / dispute) on both list cards and detail screen
-  - Vote state fetched from DB on mount — persists across navigation
-  - Optimistic update with revert on failure
-- Trust score calculation (server-side Postgres RPC — atomic, race-safe)
+  - List: vote state seeded from bulk fetch (`useUserSignals`) — one query for all cards
+  - Detail: per-event fetch via `useUserSignal`
+  - Optimistic update with revert on failure; state persists across navigation
+- Trust score calculation (server-side Postgres trigger + SECURITY DEFINER function — atomic, always in sync)
 - Realtime synchronization:
-  - List screen: `events-feed` channel patches trust score on any event UPDATE
+  - List screen: `events-feed` channel handles both UPDATE (trust score, status) and INSERT (new events, prepended + deduplicated)
   - Detail screen: two channels for event UPDATE + event_updates INSERT (deduped by id)
 - Authentication (email + password via `signInWithPassword` / `signUp`)
   - Email regex validation before Supabase call
@@ -490,9 +502,8 @@ npx expo start
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
 - Ingestion script (`npx tsx supabase/seed/ingest.ts`) with duplicate guard (15 seed events)
-- Production hardening: sanitized errors, auth loading guard, realtime payload type guards,
-  realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
-- Security: explicit RESTRICTIVE deny policies (migration 004) on events, event_updates, users
+- Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
+- Security: explicit RESTRICTIVE deny policies (migrations 004, 005) on events, event_updates, users; trust score trigger is SECURITY DEFINER to correctly bypass the authenticated deny on events UPDATE (migration 006)
 
 ### Not Implemented
 
