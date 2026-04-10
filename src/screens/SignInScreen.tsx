@@ -119,7 +119,7 @@ export function SignInScreen() {
           style={styles.input}
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
-          placeholder="Password (min. 6 characters)"
+          placeholder="Password"
           placeholderTextColor="#636366"
           secureTextEntry={true}
           autoCapitalize="none"
@@ -247,7 +247,8 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: '#8e8e93',
+    fontWeight: '500',
+    color: '#aeaeb2',
     textDecorationLine: 'underline',
   },
 });

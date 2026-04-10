@@ -102,7 +102,7 @@ interface SignalSectionProps {
 }
 
 function SignalSection({ eventId, userId }: SignalSectionProps) {
-  const { currentSignal, submitting, error, submitSignal } = useUserSignal(
+  const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
   );
@@ -110,24 +110,35 @@ function SignalSection({ eventId, userId }: SignalSectionProps) {
   return (
     <View style={styles.signalSection}>
       <View style={styles.signalButtons}>
-        <SignalButton
-          label="Confirm"
-          type="confirm"
-          active={!!(currentSignal === 'confirm')}
-          loading={!!(submitting && currentSignal === 'confirm')}
-          disabled={!!submitting}
-          onPress={() => submitSignal('confirm')}
-        />
-        <SignalButton
-          label="Dispute"
-          type="dispute"
-          active={!!(currentSignal === 'dispute')}
-          loading={!!(submitting && currentSignal === 'dispute')}
-          disabled={!!submitting}
-          onPress={() => submitSignal('dispute')}
-        />
+        {fetchLoading ? (
+          // Inert placeholder shapes while the initial signal fetch is in-flight.
+          // Prevents the idle-color → active-fill flash on navigation.
+          <>
+            <View style={[styles.signalBtn, styles.signalBtnPlaceholder]} />
+            <View style={[styles.signalBtn, styles.signalBtnPlaceholder]} />
+          </>
+        ) : (
+          <>
+            <SignalButton
+              label="Confirm"
+              type="confirm"
+              active={!!(currentSignal === 'confirm')}
+              loading={!!(submitting && currentSignal === 'confirm')}
+              disabled={!!submitting}
+              onPress={() => submitSignal('confirm')}
+            />
+            <SignalButton
+              label="Dispute"
+              type="dispute"
+              active={!!(currentSignal === 'dispute')}
+              loading={!!(submitting && currentSignal === 'dispute')}
+              disabled={!!submitting}
+              onPress={() => submitSignal('dispute')}
+            />
+          </>
+        )}
       </View>
-      {error && <Text style={styles.signalError}>{error}</Text>}
+      {!fetchLoading && error && <Text style={styles.signalError}>{error}</Text>}
     </View>
   );
 }
@@ -358,6 +369,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 40,
+  },
+  signalBtnPlaceholder: {
+    borderColor: '#2c2c2e',
   },
   signalBtnText: {
     fontSize: 14,
