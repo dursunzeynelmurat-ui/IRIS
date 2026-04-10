@@ -218,7 +218,8 @@ supabase/
 │   ├── 012_ingest_event_validation.sql
 │   ├── 013_trust_score_on_signal_delete.sql
 │   ├── 014_case_insensitive_dedup.sql
-│   └── 015_reconciliation_functions.sql
+│   ├── 015_reconciliation_functions.sql
+│   └── 016_compute_trust_score_formula.sql
 ├── scripts/
 │   └── verify_db.sql              # Read-only schema verification (run after applying all migrations)
 └── seed/
@@ -483,6 +484,7 @@ supabase/migrations/012_ingest_event_validation.sql
 supabase/migrations/013_trust_score_on_signal_delete.sql
 supabase/migrations/014_case_insensitive_dedup.sql
 supabase/migrations/015_reconciliation_functions.sql
+supabase/migrations/016_compute_trust_score_formula.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
