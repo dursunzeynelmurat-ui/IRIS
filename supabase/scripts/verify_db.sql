@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–011) to confirm expected state.
+-- Run after applying all migrations (001–012) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -213,6 +213,101 @@ WHERE conrelid = 'public.signals'::regclass
 
 -- Expected: UNIQUE (user_id, event_id)
 
+-- ── Section 11: RESTRICTIVE deny policy expressions ───────────────────────
+--
+-- Section 3 confirms that each deny policy EXISTS and has type RESTRICTIVE.
+-- This section confirms the expressions actually block access:
+--
+--   For INSERT policies (no USING clause):  qual IS NULL, with_check = 'false'
+--   For DELETE policies (no WITH CHECK):    qual = 'false', with_check IS NULL
+--   For UPDATE policies:                    qual = 'false', with_check = 'false'
+--   For ALL policies (anon deny):           qual = 'false', with_check = 'false'
+--
+-- A RESTRICTIVE policy with USING (true) or USING (auth.uid() = user_id)
+-- would satisfy Section 3 but silently fail to deny access.
+
+WITH deny_policies AS (
+  SELECT * FROM (VALUES
+    ('events',        'deny_events_insert'),
+    ('events',        'deny_events_update'),
+    ('events',        'deny_events_delete'),
+    ('event_updates', 'deny_event_updates_update'),
+    ('event_updates', 'deny_event_updates_delete'),
+    ('event_updates', 'deny_event_updates_insert'),
+    ('users',         'deny_users_insert'),
+    ('users',         'deny_users_update'),
+    ('users',         'deny_users_delete'),
+    ('signals',       'deny_signals_delete'),
+    ('signals',       'deny_signals_anon'),
+    ('users',         'deny_users_anon')
+  ) AS t(tbl, pol)
+)
+SELECT
+  d.tbl   AS "table",
+  d.pol   AS "policy",
+  p.cmd,
+  p.qual       AS "using_expr",
+  p.with_check AS "with_check_expr",
+  CASE
+    WHEN p.policyname IS NULL
+      THEN 'FAIL ← policy missing (check Section 3)'
+    -- USING clause present but not 'false'
+    WHEN p.qual IS NOT NULL AND p.qual <> 'false'
+      THEN 'FAIL ← USING is not false: ' || p.qual
+    -- WITH CHECK clause present but not 'false'
+    WHEN p.with_check IS NOT NULL AND p.with_check <> 'false'
+      THEN 'FAIL ← WITH CHECK is not false: ' || p.with_check
+    -- Neither clause present (degenerate policy — blocks nothing)
+    WHEN p.qual IS NULL AND p.with_check IS NULL
+      THEN 'FAIL ← policy has neither USING nor WITH CHECK'
+    ELSE 'PASS'
+  END AS status
+FROM deny_policies d
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = d.tbl
+  AND p.policyname = d.pol
+ORDER BY d.tbl, d.pol;
+
+-- ── Section 12: Critical CHECK constraints ────────────────────────────────
+--
+-- signals.type and events.status drive trust score calculation and product
+-- logic respectively. If these constraints were dropped or altered, invalid
+-- values could silently corrupt trust scores (wrong counts) or allow unknown
+-- event states to enter the feed.
+
+WITH expected_checks AS (
+  SELECT * FROM (VALUES
+    ('signals', 'signals_type_check',       'signals.type IN (confirm, dispute)'),
+    ('events',  'events_status_check',      'events.status IN (emerging, developing, verified, disputed)'),
+    ('events',  'events_trust_score_check', 'events.trust_score BETWEEN 0 AND 100')
+  ) AS t(tbl, expected_name, description)
+)
+SELECT
+  e.tbl         AS "table",
+  e.description AS "expected_constraint",
+  CASE
+    WHEN c.conname IS NOT NULL THEN 'PASS — ' || c.conname
+    -- Fall back: look for any CHECK constraint on the table that covers the column
+    ELSE 'FAIL ← no matching CHECK constraint found (run Section 2 to inspect)'
+  END AS status
+FROM expected_checks e
+-- Try to find a CHECK constraint whose definition contains the key column name
+LEFT JOIN pg_constraint c
+  ON c.conrelid = ('public.' || e.tbl)::regclass
+  AND c.contype = 'c'
+  AND (
+    -- signals.type check
+    (e.tbl = 'signals'  AND pg_get_constraintdef(c.oid) LIKE '%confirm%' AND pg_get_constraintdef(c.oid) LIKE '%dispute%')
+    OR
+    -- events.status check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%emerging%')
+    OR
+    -- events.trust_score check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%trust_score%')
+  )
+ORDER BY e.tbl, e.description;
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–011 are applied.
+-- All rows should show 'PASS' after migrations 001–012 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
