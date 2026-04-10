@@ -86,6 +86,7 @@ export function EventCard({
     } catch (err) {
       console.error('[EventCard] castSignal:', err);
       setCurrentSignal(previous); // revert on failure
+      hasLocalSubmit.current = false; // allow initialSignal sync again — no local change persisted
     }
 
     setSubmitting(false);
