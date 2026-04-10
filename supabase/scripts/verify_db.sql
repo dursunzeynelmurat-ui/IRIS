@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–012) to confirm expected state.
+-- Run after applying all migrations (001–015) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -96,7 +96,9 @@ WHERE n.nspname = 'public'
     'sync_source_count',
     'validate_signal_immutable_fields',
     'handle_new_user',
-    'ingest_event'
+    'ingest_event',
+    'reconcile_source_counts',   -- migration 015
+    'reconcile_trust_scores'     -- migration 015
   )
 ORDER BY p.proname;
 
@@ -122,7 +124,7 @@ JOIN pg_class c ON c.oid = t.tgrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
   AND t.tgname IN (
-    'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE on signals (migration 006)
+    'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE OR DELETE on signals (migrations 006, 013)
     'trg_sync_source_count',              -- AFTER INSERT OR DELETE on event_updates (migration 003)
     'signals_enforce_immutable_fields'    -- BEFORE UPDATE on signals (migration 009)
   )
@@ -157,7 +159,9 @@ WHERE n.nspname = 'auth'
 
 WITH checks AS (
   SELECT 'recalculate_trust_score(uuid)' AS fn UNION ALL
-  SELECT 'ingest_event(text,text,jsonb)'
+  SELECT 'ingest_event(text,text,jsonb)'  UNION ALL
+  SELECT 'reconcile_source_counts()'      UNION ALL
+  SELECT 'reconcile_trust_scores()'
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -308,6 +312,62 @@ LEFT JOIN pg_constraint c
   )
 ORDER BY e.tbl, e.description;
 
+-- ── Section 13: Trigger timing and event coverage ────────────────────────
+--
+-- Section 5 verifies triggers are ENABLED. This section verifies their
+-- timing (BEFORE vs AFTER) and which DML events they cover.
+--
+-- pg_trigger.tgtype bitmask (PostgreSQL trigger.h):
+--   ROW=1  BEFORE=2  INSERT=4  DELETE=8  UPDATE=16  TRUNCATE=32
+--
+-- Expected tgtype values:
+--   signals_enforce_immutable_fields:  BEFORE(2) | ROW(1) | UPDATE(16)  = 19
+--   signals_sync_trust_score:          AFTER(0)  | ROW(1) | INSERT(4) | DELETE(8) | UPDATE(16) = 29
+--   trg_sync_source_count:             AFTER(0)  | ROW(1) | INSERT(4) | DELETE(8) = 13
+
+WITH expected_triggers AS (
+  SELECT * FROM (VALUES
+    ('signals',       'signals_enforce_immutable_fields', 19,
+     'BEFORE UPDATE — must be BEFORE or the immutability check runs too late'),
+    ('signals',       'signals_sync_trust_score',         29,
+     'AFTER INSERT OR UPDATE OR DELETE — must cover DELETE for user account cascade'),
+    ('event_updates', 'trg_sync_source_count',            13,
+     'AFTER INSERT OR DELETE')
+  ) AS t(tbl, trig, expected_tgtype, description)
+)
+SELECT
+  e.tbl          AS "table",
+  e.trig         AS "trigger",
+  e.description  AS "expected",
+  t.tgtype       AS "actual_tgtype",
+  CASE
+    WHEN t.tgname IS NULL
+      THEN 'FAIL ← trigger not found (check Section 5)'
+    WHEN t.tgtype <> e.expected_tgtype
+      THEN 'FAIL ← tgtype ' || t.tgtype || ' ≠ expected ' || e.expected_tgtype || ' (' || e.description || ')'
+    ELSE 'PASS'
+  END AS status
+FROM expected_triggers e
+LEFT JOIN pg_trigger t
+  ON t.tgname = e.trig
+  AND t.tgrelid = ('public.' || e.tbl)::regclass
+ORDER BY e.tbl, e.trig;
+
+-- ── Section 14: Functional index for dedup query ──────────────────────────
+--
+-- Migration 014 adds idx_events_dedup on (lower(title), created_at DESC).
+-- If this index is missing, the ingest_event dedup query is a sequential scan.
+
+SELECT
+  CASE WHEN count(*) > 0
+    THEN 'PASS — idx_events_dedup exists'
+    ELSE 'FAIL ← idx_events_dedup missing (run migration 014)'
+  END AS "dedup_index_status"
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename  = 'events'
+  AND indexname  = 'idx_events_dedup';
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–012 are applied.
+-- All rows should show 'PASS' after migrations 001–015 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.

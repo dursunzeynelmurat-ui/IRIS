@@ -101,9 +101,9 @@ trust_score = ROUND(confirms / (confirms + disputes) * 100)
 ```
 
 Rules:
-- If total signals = 0 → no update (divide-by-zero guard)
+- If total signals = 0 → reset to 50 (neutral default; handles the case where the last signal was deleted, e.g. via user account cascade)
 - Score clamped 0–100 (belt-and-suspenders alongside the CHECK constraint on `events`)
-- Trigger fires `AFTER INSERT OR UPDATE ON signals` → function runs in the same transaction as the signal write — trust_score can never become stale silently
+- Trigger fires `AFTER INSERT OR UPDATE OR DELETE ON signals` → trust_score updated in the same transaction as the signal write — can never become stale silently, including when user accounts are deleted (cascade-deletes their signals)
 
 **Why `SECURITY DEFINER`:** migration 004 added a RESTRICTIVE deny on `events UPDATE` for the `authenticated` role. Without `SECURITY DEFINER`, the function would run as the caller (authenticated user) and the UPDATE would be denied by RLS. With `SECURITY DEFINER` the function runs as its owner (postgres), which has BYPASSRLS. `SET search_path = public` is set on the function to prevent search-path injection (Supabase best practice).
 
@@ -215,7 +215,10 @@ supabase/
 │   ├── 009_backend_hardening.sql
 │   ├── 010_explicit_anon_deny.sql
 │   ├── 011_atomic_ingest_function.sql
-│   └── 012_ingest_event_validation.sql
+│   ├── 012_ingest_event_validation.sql
+│   ├── 013_trust_score_on_signal_delete.sql
+│   ├── 014_case_insensitive_dedup.sql
+│   └── 015_reconciliation_functions.sql
 ├── scripts/
 │   └── verify_db.sql              # Read-only schema verification (run after applying all migrations)
 └── seed/
@@ -477,6 +480,9 @@ supabase/migrations/009_backend_hardening.sql
 supabase/migrations/010_explicit_anon_deny.sql
 supabase/migrations/011_atomic_ingest_function.sql
 supabase/migrations/012_ingest_event_validation.sql
+supabase/migrations/013_trust_score_on_signal_delete.sql
+supabase/migrations/014_case_insensitive_dedup.sql
+supabase/migrations/015_reconciliation_functions.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -526,18 +532,19 @@ npx expo start
   - Sign Out button accessible from both EventList and EventDetail headers
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
-- Ingestion script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC (migrations 011–012): advisory-lock duplicate guard (TOCTOU-safe); event + updates in one transaction (no orphaned rows); input validation rejects empty title, empty updates array, missing update fields, invalid status — all with descriptive error messages
+- Ingestion script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC (migrations 011–014): advisory-lock case-insensitive duplicate guard (TOCTOU-safe); event + updates in one transaction (no orphaned rows); input validation rejects empty title, empty updates array, missing update fields, invalid status; functional index on `lower(title)` supports O(log n) dedup query
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
+- Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER
 - Security:
   - RESTRICTIVE deny policies on all write paths for `authenticated` (migrations 004, 005, 007): events INSERT/UPDATE/DELETE, event_updates INSERT/UPDATE/DELETE, users INSERT/UPDATE/DELETE, signals DELETE
   - Explicit RESTRICTIVE deny for `anon` role on signals and users (migration 010): product rule machine-verifiable via pg_policies
   - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007)
   - BEFORE UPDATE trigger enforces signal field immutability: user_id, event_id, created_at cannot be changed after creation (migration 009)
-  - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations (migrations 006, 009)
-  - `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–012)
-  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–012)
+  - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations; fires on INSERT OR UPDATE OR DELETE — covers user account cascade-delete path (migrations 006, 009, 013)
+  - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–015)
+  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–015)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL that checks all RLS, RESTRICTIVE policies, SECURITY DEFINER functions, triggers, and EXECUTE grants
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, and functional indexes (001–015)
 
 ### Not Implemented
 
