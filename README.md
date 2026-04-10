@@ -151,8 +151,9 @@ No client-side RPC call is needed. `trust_score` is always in sync with signals.
 ### Ingestion Duplicate Guard
 
 Events are skipped if:
-- Same title (exact match) exists
-- Within the last 10 minutes
+- Same title (case-insensitive, leading/trailing whitespace trimmed) exists within the last 10 minutes
+
+Migration 014 added case-insensitive dedup via `lower(title)` comparison and a matching functional index (`CREATE INDEX ON events (lower(title)) WHERE created_at > NOW() - INTERVAL '10 minutes'`) for query performance.
 
 ### Ingestion Script
 
@@ -593,6 +594,7 @@ npx expo start
   - `fixtures/example.json`: 3-item example showing full `RawSourceItem` shape (all optional fields)
 - Quick seed script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC directly (bypasses adapter/normalize layers)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
+- Case-insensitive ingestion dedup (migration 014): `ingest_event` compares titles via `lower(title)` — "Breaking News" and "breaking news" deduplicate correctly; functional index on `lower(title)` covers the dedup query without a sequential scan
 - Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER
 - Unified trust score formula (migration 016): `compute_trust_score(confirms, disputes)` is the single authoritative scoring function (IMMUTABLE SQL); both `recalculate_trust_score` and `reconcile_trust_scores` delegate to it — formula lives in one place, drift between trigger path and reconciliation tool is structurally impossible
 - Security:
