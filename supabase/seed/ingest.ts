@@ -1,15 +1,19 @@
 /**
- * IRIS — Event Ingestion Script (MVP)
+ * IRIS — Quick Seed Script
+ *
+ * Convenience script for seeding a dev/local Supabase instance with the 15
+ * standard sample events in one command. Calls ingest_event RPC directly.
  *
  * Usage:
  *   npx tsx supabase/seed/ingest.ts
  *
  * Requires in .env:
  *   EXPO_PUBLIC_SUPABASE_URL
- *   SUPABASE_SERVICE_KEY   ← service role key bypasses RLS
+ *   SUPABASE_SERVICE_KEY   ← service_role key bypasses RLS
  *
- * Duplicate guard: if an event with the same title was inserted
- * within the last 10 minutes, it is skipped.
+ * For structured ingestion with adapter/normalization/dry-run support,
+ * use the ingestion pipeline instead:
+ *   npx tsx supabase/ingestion/run.ts --adapter=sample [--dry-run] [--limit=N]
  */
 
 import { createClient } from '@supabase/supabase-js';

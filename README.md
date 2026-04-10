@@ -220,10 +220,18 @@ supabase/
 │   ├── 014_case_insensitive_dedup.sql
 │   ├── 015_reconciliation_functions.sql
 │   └── 016_compute_trust_score_formula.sql
+├── ingestion/                     # V1 ingestion pipeline (adapter → normalize → write)
+│   ├── types.ts                   # RawSourceItem, NormalizedEvent, SourceAdapter, IngestionResult
+│   ├── client.ts                  # createIngestionClient() — service_role Supabase client
+│   ├── normalize.ts               # normalizeSourceItem(): RawSourceItem → NormalizedEvent
+│   ├── ingest.ts                  # ingestEvent(): write gate (calls ingest_event RPC only)
+│   ├── run.ts                     # CLI runner: --adapter=<name> [--dry-run] [--limit=N]
+│   └── adapters/
+│       └── sample.ts              # SampleAdapter — 15 mock events for dev/testing
 ├── scripts/
 │   └── verify_db.sql              # Read-only schema verification (run after applying all migrations)
 └── seed/
-    └── ingest.ts                  # Event ingestion script (calls ingest_event RPC, service-role only)
+    └── ingest.ts                  # Quick seed shorthand (calls ingest_event RPC directly)
 ```
 
 ---
@@ -497,9 +505,17 @@ supabase/migrations/016_compute_trust_score_formula.sql
 - Enable for `events` table
 - Enable for `event_updates` table
 
-**6. Seed data (optional)**
+**6. Seed / ingest events (optional)**
 ```bash
-# Add SUPABASE_SERVICE_KEY to .env first
+# Add SUPABASE_SERVICE_KEY to .env first (service_role key from Supabase dashboard)
+
+# Option A — Dry run: see what would be ingested, no DB writes
+npx tsx supabase/ingestion/run.ts --dry-run
+
+# Option B — Ingest sample events via the structured pipeline
+npx tsx supabase/ingestion/run.ts --adapter=sample
+
+# Option C — Quick seed shorthand (same events, no adapter layer)
 npx tsx supabase/seed/ingest.ts
 ```
 
@@ -534,7 +550,13 @@ npx expo start
   - Sign Out button accessible from both EventList and EventDetail headers
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
-- Ingestion script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC (migrations 011–014): advisory-lock case-insensitive duplicate guard (TOCTOU-safe); event + updates in one transaction (no orphaned rows); input validation rejects empty title, empty updates array, missing update fields, invalid status; functional index on `lower(title)` supports O(log n) dedup query
+- V1 ingestion pipeline (`supabase/ingestion/`): layered architecture separating source fetch, normalization, and write; all writes go through `ingest_event` RPC (service_role only); `--dry-run` mode; `--limit=N` for batch testing; SampleAdapter with 15 realistic events; adapter registry for adding real sources
+  - `types.ts`: `RawSourceItem` (adapter output) → `NormalizedEvent` (IRIS DB shape); `SourceAdapter` interface; `IngestionResult`
+  - `normalize.ts`: `normalizeSourceItem()` — validates headline/status/content/source_name, trims whitespace, assembles updates array; throws `NormalizationError` on bad input
+  - `ingest.ts`: `ingestEvent()` — write gate, calls `ingest_event` RPC, returns `ok` / `skipped` / `error`
+  - `run.ts`: CLI runner `npx tsx supabase/ingestion/run.ts [--adapter=sample] [--dry-run] [--limit=N]`
+  - `adapters/sample.ts`: `SampleAdapter` — 15 mock events in `RawSourceItem` shape; add real adapters here
+- Quick seed script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC directly (bypasses adapter/normalize layers)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
 - Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER
 - Unified trust score formula (migration 016): `compute_trust_score(confirms, disputes)` is the single authoritative scoring function (IMMUTABLE SQL); both `recalculate_trust_score` and `reconcile_trust_scores` delegate to it — formula lives in one place, drift between trigger path and reconciliation tool is structurally impossible
