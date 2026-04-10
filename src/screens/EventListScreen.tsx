@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -91,6 +92,7 @@ export function EventListScreen({ navigation }: Props) {
         showsHorizontalScrollIndicator={false}
         style={styles.filterBar}
         contentContainerStyle={styles.filterBarContent}
+        accessibilityRole="tablist"
       >
         {FILTERS.map(({ key, label }) => {
           const isActive = activeFilter === key;
@@ -135,8 +137,13 @@ export function EventListScreen({ navigation }: Props) {
         contentContainerStyle={
           filtered.length === 0 ? styles.centeredFlex : styles.listContent
         }
-        refreshing={refreshing}
-        onRefresh={refetch}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refetch}
+            tintColor="#8e8e93"
+          />
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
