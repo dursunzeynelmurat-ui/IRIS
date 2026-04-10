@@ -175,7 +175,9 @@ Events are skipped if:
 src/
 ├── components/
 │   ├── ErrorBoundary.tsx    # Top-level crash recovery boundary
-│   └── EventCard.tsx        # Card with vote buttons (signal state via props, no per-card fetch)
+│   ├── EventCard.tsx        # Card with vote buttons (signal state via props, no per-card fetch)
+│   ├── SignalButton.tsx      # Shared Confirm/Dispute button — active/faded/loading/disabled states
+│   └── StatusBadge.tsx      # Shared status badge — border + subtle tint + uppercase label
 ├── context/
 │   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
 ├── lib/
@@ -252,7 +254,7 @@ Three-state conditional render:
 
 ### Sign Out
 
-- Header button on Event List screen
+- Header button on both Event List and Event Detail screens
 - Calls `supabase.auth.signOut()`
 - `onAuthStateChange` fires → `userId` becomes null → app returns to `SignInScreen`
 
@@ -273,7 +275,9 @@ Three-state conditional render:
 
 - Fetches event + updates in parallel via `Promise.all`
 - Updates ordered `created_at ASC` (chronological timeline)
-- Exposes: `{ event, updates, loading, error, refetch }`
+- Exposes: `{ event, updates, loading, refreshing, error, refetch }`
+  - `loading` is `true` only on the initial fetch (shows full-screen spinner)
+  - `refreshing` is `true` on pull-to-refresh (mirrors `useEvents` pattern)
 - Also manages realtime subscriptions (see §10)
 
 ### `useUserSignals`
@@ -390,7 +394,7 @@ Shown in the `EventDetailScreen` header. The screen is only reachable when authe
 Three visual states:
 1. **Fetching** (`fetchLoading`): two neutral placeholder button shapes; prevents idle-color flash while the initial signal fetch completes
 2. **Idle**: Confirm button with green border + green text; Dispute button with red border + red text
-3. **Active**: selected button filled with accent color + white text; unselected button unchanged; both disabled while `submitting`
+3. **Active**: selected button filled with accent color + white text; unselected button faded (opacity 0.35); both disabled while `submitting`
 
 Inline error shown below buttons on submission failure.
 

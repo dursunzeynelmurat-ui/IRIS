@@ -21,10 +21,13 @@ function AppContent() {
 
   if (loading) {
     return (
-      <View style={styles.splash}>
-        <Text style={styles.splashWordmark}>IRIS</Text>
-        <ActivityIndicator size="small" color="#636366" style={styles.splashSpinner} />
-      </View>
+      <>
+        <StatusBar style="light" />
+        <View style={styles.splash}>
+          <Text style={styles.splashWordmark}>IRIS</Text>
+          <ActivityIndicator size="small" color="#636366" style={styles.splashSpinner} />
+        </View>
+      </>
     );
   }
 
