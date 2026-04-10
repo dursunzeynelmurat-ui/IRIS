@@ -124,7 +124,12 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
 | `signals` | Own rows only | INSERT + UPDATE own rows only (no DELETE — protected by RESTRICTIVE deny) |
 | `users` | Own row only | — (created by trigger on auth.users INSERT) |
 
-> **Security note:** Migrations 004, 005, and 007 add `RESTRICTIVE` deny policies on `events`, `event_updates`, `users`, and `signals` DELETE for the `authenticated` role. These are ANDed with all permissive policies — no future accidental permissive policy can re-open a blocked path. The `signals_update_own` policy additionally uses `WITH CHECK (auth.uid() = user_id)` (migration 007) to prevent post-update field reassignment. The ingestion script uses the service-role key which bypasses RLS and is unaffected.
+> **Security note:** RESTRICTIVE deny policies are ANDed with all permissive policies — no future accidental permissive policy can re-open a blocked path.
+> - Migrations 004 + 005: block `authenticated` from INSERT/UPDATE/DELETE on `events`, `event_updates`, and `users`; block `authenticated` INSERT on `event_updates`
+> - Migration 007: block `authenticated` DELETE on `signals`; add `WITH CHECK (auth.uid() = user_id)` to `signals_update_own` to prevent post-update ownership reassignment
+> - Migration 009: BEFORE UPDATE trigger enforces signal field immutability (user_id, event_id, created_at); `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC; all SECURITY DEFINER functions use `SET search_path = public`
+> - Migration 010: explicit `RESTRICTIVE FOR ALL TO anon USING (false)` on `signals` and `users` — the product rule "anonymous users do not enter the app" is now machine-verifiable via `pg_policies`
+> - The ingestion script uses the service-role key which bypasses RLS entirely and is unaffected by any of the above.
 
 ---
 
@@ -204,9 +209,17 @@ supabase/
 │   ├── 003_fix_source_count_trigger.sql
 │   ├── 004_explicit_deny_policies.sql
 │   ├── 005_deny_event_updates_insert.sql
-│   └── 006_signals_trust_score_trigger.sql
+│   ├── 006_signals_trust_score_trigger.sql
+│   ├── 007_signal_integrity.sql
+│   ├── 008_source_count_trigger_hardening.sql
+│   ├── 009_backend_hardening.sql
+│   ├── 010_explicit_anon_deny.sql
+│   ├── 011_atomic_ingest_function.sql
+│   └── 012_ingest_event_validation.sql
+├── scripts/
+│   └── verify_db.sql              # Read-only schema verification (run after applying all migrations)
 └── seed/
-    └── ingest.ts
+    └── ingest.ts                  # Event ingestion script (calls ingest_event RPC, service-role only)
 ```
 
 ---
@@ -463,6 +476,7 @@ supabase/migrations/008_source_count_trigger_hardening.sql
 supabase/migrations/009_backend_hardening.sql
 supabase/migrations/010_explicit_anon_deny.sql
 supabase/migrations/011_atomic_ingest_function.sql
+supabase/migrations/012_ingest_event_validation.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -512,7 +526,7 @@ npx expo start
   - Sign Out button accessible from both EventList and EventDetail headers
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
-- Ingestion script (`npx tsx supabase/seed/ingest.ts`) with atomic ingestion via DB function (migration 011): advisory-lock duplicate guard prevents TOCTOU races; event + updates inserted in one transaction (no orphaned events on partial failure)
+- Ingestion script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC (migrations 011–012): advisory-lock duplicate guard (TOCTOU-safe); event + updates in one transaction (no orphaned rows); input validation rejects empty title, empty updates array, missing update fields, invalid status — all with descriptive error messages
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
 - Security:
   - RESTRICTIVE deny policies on all write paths for `authenticated` (migrations 004, 005, 007): events INSERT/UPDATE/DELETE, event_updates INSERT/UPDATE/DELETE, users INSERT/UPDATE/DELETE, signals DELETE
@@ -520,8 +534,8 @@ npx expo start
   - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007)
   - BEFORE UPDATE trigger enforces signal field immutability: user_id, event_id, created_at cannot be changed after creation (migration 009)
   - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations (migrations 006, 009)
-  - `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011)
-  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011)
+  - `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–012)
+  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–012)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
 - Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL that checks all RLS, RESTRICTIVE policies, SECURITY DEFINER functions, triggers, and EXECUTE grants
 
