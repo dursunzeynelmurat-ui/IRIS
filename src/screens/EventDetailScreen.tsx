@@ -17,7 +17,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { STATUS_COLOR, scoreColor } from '../lib/eventUtils';
+import { scoreColor } from '../lib/eventUtils';
 import { EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -176,7 +176,6 @@ export function EventDetailScreen({ route, navigation }: Props) {
   }
 
   const sourceLabel = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
-  const statusColor = STATUS_COLOR[event.status];
   const trustScore  = event.trust_score ?? 50;
   const barColor    = scoreColor(trustScore);
 

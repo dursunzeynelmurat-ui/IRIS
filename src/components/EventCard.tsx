@@ -47,7 +47,7 @@ export function EventCard({
     }
   }, [initialSignal]);
 
-  const statusColor = STATUS_COLOR[event.status] ?? '#888';
+  const statusColor = STATUS_COLOR[event.status];
   const trustScore  = event.trust_score ?? 50;
   const barColor    = scoreColor(trustScore);
 

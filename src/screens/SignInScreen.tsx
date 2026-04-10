@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  type TextInput as TextInputRef,
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
@@ -20,6 +21,7 @@ export function SignInScreen() {
   const [loading, setLoading]   = useState<LoadingAction>(null);
   const [error, setError]       = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
+  const passwordRef             = useRef<TextInputRef>(null);
 
   function validate(): string | null {
     if (!email.trim())    return 'Please enter your email address.';
@@ -115,22 +117,26 @@ export function SignInScreen() {
           placeholder="Email address"
           placeholderTextColor="#636366"
           keyboardType="email-address"
+          textContentType="emailAddress"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!!(!busy)}
+          editable={!busy}
           returnKeyType="next"
+          onSubmitEditing={() => passwordRef.current?.focus()}
         />
 
         <TextInput
+          ref={passwordRef}
           style={styles.input}
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
           placeholder="Password"
           placeholderTextColor="#636366"
           secureTextEntry={true}
+          textContentType="password"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!!(!busy)}
+          editable={!busy}
           returnKeyType="done"
           onSubmitEditing={handleSignIn}
         />

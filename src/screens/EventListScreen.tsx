@@ -135,7 +135,7 @@ export function EventListScreen({ navigation }: Props) {
         contentContainerStyle={
           filtered.length === 0 ? styles.centeredFlex : styles.listContent
         }
-        refreshing={!!refreshing}
+        refreshing={refreshing}
         onRefresh={refetch}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
