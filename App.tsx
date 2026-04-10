@@ -1,7 +1,7 @@
 import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
@@ -21,9 +21,13 @@ function AppContent() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0d0d0d' }}>
-        <ActivityIndicator size="large" color="#fff" />
-      </View>
+      <>
+        <StatusBar style="light" />
+        <View style={styles.splash}>
+          <Text style={styles.splashWordmark}>IRIS</Text>
+          <ActivityIndicator size="small" color="#636366" style={styles.splashSpinner} />
+        </View>
+      </>
     );
   }
 
@@ -44,7 +48,10 @@ function AppContent() {
           <Stack.Screen
             name="EventList"
             component={EventListScreen}
-            options={{ title: 'IRIS' }}
+            options={{
+              title: 'IRIS',
+              headerTitleStyle: styles.navTitle,
+            }}
           />
           <Stack.Screen
             name="EventDetail"
@@ -68,3 +75,29 @@ export default function App() {
     </AuthProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  // ── Splash / auth loading ──
+  splash: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0d0d0d',
+  },
+  splashWordmark: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#f2f2f2',
+    letterSpacing: 6,
+  },
+  splashSpinner: {
+    marginTop: 24,
+  },
+
+  // ── Navigation header ──
+  navTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 4,
+  },
+});

@@ -5,6 +5,8 @@ import { SignalType } from '../types';
 
 interface UseUserSignalResult {
   currentSignal: SignalType | null;
+  /** True while the initial signal fetch is in-flight. */
+  fetchLoading: boolean;
   submitting: boolean;
   error: string | null;
   submitSignal: (type: SignalType) => Promise<void>;
@@ -15,6 +17,8 @@ export function useUserSignal(
   userId: string | null,
 ): UseUserSignalResult {
   const [currentSignal, setCurrentSignal] = useState<SignalType | null>(null);
+  // Start loading immediately if we have a userId — no fetch needed otherwise.
+  const [fetchLoading, setFetchLoading] = useState(!!userId);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,9 +26,11 @@ export function useUserSignal(
   useEffect(() => {
     if (!userId) {
       setCurrentSignal(null);
+      setFetchLoading(false);
       return;
     }
 
+    setFetchLoading(true);
     let mounted = true;
 
     supabase
@@ -37,9 +43,10 @@ export function useUserSignal(
         if (!mounted) return;
         if (dbError) {
           console.error('[useUserSignal] fetch:', dbError);
-          return;
+        } else {
+          setCurrentSignal((data?.type as SignalType) ?? null);
         }
-        setCurrentSignal((data?.type as SignalType) ?? null);
+        setFetchLoading(false);
       });
 
     return () => { mounted = false; };
@@ -68,5 +75,5 @@ export function useUserSignal(
     setSubmitting(false);
   }
 
-  return { currentSignal, submitting, error, submitSignal };
+  return { currentSignal, fetchLoading, submitting, error, submitSignal };
 }

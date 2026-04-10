@@ -35,7 +35,13 @@ export class ErrorBoundary extends Component<Props, State> {
         <View style={styles.container}>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message}>{this.state.message}</Text>
-          <TouchableOpacity style={styles.button} onPress={this.reset}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={this.reset}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Try again"
+          >
             <Text style={styles.buttonText}>Try again</Text>
           </TouchableOpacity>
         </View>
@@ -70,11 +76,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: '#3a3a3c',
     borderRadius: 8,
   },
   buttonText: {
     fontSize: 15,
+    fontWeight: '600',
     color: '#f2f2f2',
   },
 });

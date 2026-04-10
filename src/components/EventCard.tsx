@@ -1,42 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SignalButton } from './SignalButton';
+import { StatusBadge } from './StatusBadge';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
+import { STATUS_COLOR, STATUS_LABEL, scoreColor } from '../lib/eventUtils';
 import { castSignal } from '../services/signalService';
-import { Event, EventStatus, SignalType } from '../types';
-
-// ── Helpers ───────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<EventStatus, string> = {
-  emerging:   'Emerging',
-  developing: 'Developing',
-  verified:   'Verified',
-  disputed:   'Disputed',
-};
-
-const STATUS_COLOR: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
-  developing: '#0a84ff',
-  verified:   '#30d158',
-  disputed:   '#ff453a',
-};
-
-function scoreColor(score: number): string {
-  if (score >= 67) return '#30d158';
-  if (score >= 34) return '#ff9f0a';
-  return '#ff453a';
-}
+import { Event, SignalType } from '../types';
 
 // ── Component ─────────────────────────────────────────────────
 
 interface EventCardProps {
   event: Event;
-  userId: string;               // always non-null — list screen is auth-gated
+  userId: string;                   // always non-null — list screen is auth-gated
   initialSignal: SignalType | null; // pre-seeded by bulk fetch in EventListScreen
   onSignalCast: (type: SignalType) => void; // notifies parent to keep map current
   onPress: () => void;
@@ -67,7 +47,7 @@ export function EventCard({
     }
   }, [initialSignal]);
 
-  const statusColor = STATUS_COLOR[event.status] ?? '#888';
+  const statusColor = STATUS_COLOR[event.status];
   const trustScore  = event.trust_score ?? 50;
   const barColor    = scoreColor(trustScore);
 
@@ -92,48 +72,14 @@ export function EventCard({
     setSubmitting(false);
   }
 
-  function voteButton(type: SignalType) {
-    const isConfirm  = type === 'confirm';
-    const isSelected = currentSignal === type;
-    const isOther    = currentSignal !== null && currentSignal !== type;
-
-    return (
-      <TouchableOpacity
-        style={[
-          styles.actionBtn,
-          isConfirm
-            ? isSelected ? styles.confirmActive : styles.confirmIdle
-            : isSelected ? styles.disputeActive  : styles.disputeIdle,
-          isOther && styles.btnFaded,
-        ]}
-        onPress={() => submitSignal(type)}
-        disabled={!!(isSelected || submitting)}
-        activeOpacity={0.8}
-      >
-        {submitting && isSelected ? (
-          <ActivityIndicator
-            size="small"
-            color={isConfirm ? '#30d158' : '#ff453a'}
-          />
-        ) : (
-          <Text
-            style={[
-              styles.actionText,
-              isSelected && (isConfirm ? styles.confirmActiveText : styles.disputeActiveText),
-            ]}
-          >
-            {isConfirm ? '✓  Confirm' : '✗  Dispute'}
-          </Text>
-        )}
-      </TouchableOpacity>
-    );
-  }
-
   return (
     <TouchableOpacity
       style={[styles.card, { borderLeftColor: statusColor }]}
       onPress={onPress}
       activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={`${event.title}, ${STATUS_LABEL[event.status] ?? event.status}`}
+      accessibilityHint="Opens event details"
     >
       {/* Title */}
       <Text style={styles.cardTitle} numberOfLines={2}>
@@ -142,11 +88,7 @@ export function EventCard({
 
       {/* Status badge + trust score */}
       <View style={styles.cardMeta}>
-        <View style={[styles.badge, { borderColor: statusColor }]}>
-          <Text style={[styles.badgeText, { color: statusColor }]}>
-            {STATUS_LABEL[event.status] ?? event.status}
-          </Text>
-        </View>
+        <StatusBadge status={event.status} />
         <Text style={styles.scoreLabel}>
           Trust{' '}
           <Text style={[styles.scoreValue, { color: barColor }]}>
@@ -174,10 +116,25 @@ export function EventCard({
         <Text style={styles.cardAge}>{formatRelativeTime(event.created_at)}</Text>
       </View>
 
+      {/* Divider: separates content area from signal actions */}
+      <View style={styles.actionsDivider} />
+
       {/* Signal buttons */}
       <View style={styles.actions}>
-        {voteButton('confirm')}
-        {voteButton('dispute')}
+        {(['confirm', 'dispute'] as SignalType[]).map((type) => {
+          const isSelected = currentSignal === type;
+          return (
+            <SignalButton
+              key={type}
+              type={type}
+              active={isSelected}
+              loading={!!(submitting && isSelected)}
+              disabled={!!(isSelected || submitting)}
+              faded={!!(currentSignal !== null && !isSelected)}
+              onPress={() => submitSignal(type)}
+            />
+          );
+        })}
       </View>
     </TouchableOpacity>
   );
@@ -190,7 +147,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1c1c1e',
     borderRadius: 12,
     padding: 16,
-    borderLeftWidth: 3,
+    borderLeftWidth: 4,
   },
   cardTitle: {
     fontSize: 16,
@@ -204,18 +161,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
-  },
-  badge: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   scoreLabel: {
     fontSize: 13,
@@ -232,61 +177,18 @@ const styles = StyleSheet.create({
 
   // ── Score bar ──
   scoreBarBg: {
-    height: 4,
+    height: 5,
     backgroundColor: '#2c2c2e',
-    borderRadius: 2,
+    borderRadius: 3,
     overflow: 'hidden',
     marginBottom: 14,
   },
   scoreBarFill: {
     height: '100%',
-    borderRadius: 2,
+    borderRadius: 3,
   },
 
-  // ── Action buttons ──
-  actions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 36,
-  },
-  confirmIdle: {
-    borderColor: '#30d158',
-    backgroundColor: 'transparent',
-  },
-  confirmActive: {
-    borderColor: '#30d158',
-    backgroundColor: '#30d158',
-  },
-  disputeIdle: {
-    borderColor: '#ff453a',
-    backgroundColor: 'transparent',
-  },
-  disputeActive: {
-    borderColor: '#ff453a',
-    backgroundColor: '#ff453a',
-  },
-  actionText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8e8e93',
-  },
-  confirmActiveText: {
-    color: '#fff',
-  },
-  disputeActiveText: {
-    color: '#fff',
-  },
-  btnFaded: {
-    opacity: 0.3,
-  },
+  // ── Footer ──
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -299,5 +201,16 @@ const styles = StyleSheet.create({
   cardAge: {
     fontSize: 11,
     color: '#636366',
+  },
+
+  // ── Signal buttons ──
+  actionsDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#2c2c2e',
+    marginBottom: 10,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 10,
   },
 });

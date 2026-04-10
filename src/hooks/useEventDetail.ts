@@ -1,23 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Event, EventUpdate } from '../types';
 
 interface UseEventDetailResult {
   event: Event | null;
   updates: EventUpdate[];
-  loading: boolean;
+  loading: boolean;     // true only on the initial fetch
+  refreshing: boolean;  // true on pull-to-refresh (mirrors useEvents pattern)
   error: string | null;
   refetch: () => void;
 }
 
 export function useEventDetail(eventId: string): UseEventDetailResult {
-  const [event, setEvent] = useState<Event | null>(null);
-  const [updates, setUpdates] = useState<EventUpdate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [event, setEvent]       = useState<Event | null>(null);
+  const [updates, setUpdates]   = useState<EventUpdate[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const initialLoad             = useRef(true);
 
   async function fetchDetail() {
-    setLoading(true);
+    if (initialLoad.current) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setError(null);
 
     const [eventResult, updatesResult] = await Promise.all([
@@ -33,6 +40,7 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
       console.error('[useEventDetail] event fetch:', eventResult.error);
       setError('Unable to load event. Please try again.');
       setLoading(false);
+      setRefreshing(false);
       return;
     }
 
@@ -40,15 +48,20 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
       console.error('[useEventDetail] updates fetch:', updatesResult.error);
       setError('Unable to load event updates. Please try again.');
       setLoading(false);
+      setRefreshing(false);
       return;
     }
 
     setEvent(eventResult.data);
     setUpdates(updatesResult.data ?? []);
     setLoading(false);
+    setRefreshing(false);
+    initialLoad.current = false;
   }
 
   useEffect(() => {
+    // Reset initial-load flag so navigating to a new event shows the full spinner.
+    initialLoad.current = true;
     fetchDetail();
 
     // Channel 1: patch event fields (trust_score etc.) on UPDATE
@@ -76,7 +89,6 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
           if (!raw || typeof raw !== 'object' || !('id' in raw)) return;
           const incoming = raw as EventUpdate;
           setUpdates((prev) => {
-            // Guard: don't add if already present (e.g. overlap with a refetch)
             if (prev.some((u) => u.id === incoming.id)) return prev;
             return [...prev, incoming];
           });
@@ -90,5 +102,5 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
     };
   }, [eventId]);
 
-  return { event, updates, loading, error, refetch: fetchDetail };
+  return { event, updates, loading, refreshing, error, refetch: fetchDetail };
 }

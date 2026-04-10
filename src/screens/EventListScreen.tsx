@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,6 +14,7 @@ import { EventCard } from '../components/EventCard';
 import { useAuth } from '../hooks/useAuth';
 import { useEvents } from '../hooks/useEvents';
 import { useUserSignals } from '../hooks/useUserSignals';
+import { STATUS_COLOR } from '../lib/eventUtils';
 import { supabase } from '../lib/supabase';
 import { EventStatus } from '../types';
 import type { RootStackParamList } from '../types/navigation';
@@ -29,13 +31,6 @@ const FILTERS: { key: FilterOption; label: string }[] = [
   { key: 'disputed',   label: 'Disputed' },
 ];
 
-const FILTER_COLOR: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
-  developing: '#0a84ff',
-  verified:   '#30d158',
-  disputed:   '#ff453a',
-};
-
 export function EventListScreen({ navigation }: Props) {
   const { events, loading, refreshing, error, refetch } = useEvents();
   const { userId } = useAuth();
@@ -50,6 +45,9 @@ export function EventListScreen({ navigation }: Props) {
         <TouchableOpacity
           onPress={() => supabase.auth.signOut()}
           style={styles.signOutBtn}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
         >
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
@@ -73,7 +71,13 @@ export function EventListScreen({ navigation }: Props) {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>Unable to load events.</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={refetch}>
+        <TouchableOpacity
+          style={styles.retryBtn}
+          onPress={refetch}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading events"
+        >
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -88,10 +92,11 @@ export function EventListScreen({ navigation }: Props) {
         showsHorizontalScrollIndicator={false}
         style={styles.filterBar}
         contentContainerStyle={styles.filterBarContent}
+        accessibilityRole="tablist"
       >
         {FILTERS.map(({ key, label }) => {
           const isActive = activeFilter === key;
-          const accentColor = key === 'all' ? '#f2f2f2' : FILTER_COLOR[key as EventStatus];
+          const accentColor = key === 'all' ? '#f2f2f2' : STATUS_COLOR[key as EventStatus];
           return (
             <TouchableOpacity
               key={key}
@@ -101,6 +106,9 @@ export function EventListScreen({ navigation }: Props) {
               ]}
               onPress={() => setActiveFilter(key)}
               activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityLabel={key === 'all' ? 'All events' : `${label} events`}
+              accessibilityState={{ selected: isActive }}
             >
               <Text style={[
                 styles.filterChipText,
@@ -129,12 +137,20 @@ export function EventListScreen({ navigation }: Props) {
         contentContainerStyle={
           filtered.length === 0 ? styles.centeredFlex : styles.listContent
         }
-        refreshing={!!refreshing}
-        onRefresh={refetch}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refetch}
+            tintColor="#8e8e93"
+          />
+        }
         ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            {activeFilter === 'all' ? 'No events yet.' : `No ${activeFilter} events.`}
-          </Text>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {activeFilter === 'all' ? 'No events yet.' : `No ${activeFilter} events.`}
+            </Text>
+            <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+          </View>
         }
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
@@ -159,21 +175,21 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#3a3a3c',
   },
   filterChipText: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#8e8e93',
   },
   list: {
     flex: 1,
   },
   listContent: {
-    padding: 12,
+    padding: 14,
   },
   centeredFlex: {
     flexGrow: 1,
@@ -201,16 +217,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: '#3a3a3c',
     borderRadius: 8,
   },
   retryText: {
     fontSize: 14,
+    fontWeight: '600',
     color: '#f2f2f2',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    gap: 6,
   },
   emptyText: {
     fontSize: 15,
+    fontWeight: '600',
     color: '#8e8e93',
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: '#636366',
   },
   signOutBtn: {
     marginRight: 4,

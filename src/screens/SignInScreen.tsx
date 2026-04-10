@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  type TextInput as TextInputRef,
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
@@ -20,6 +21,7 @@ export function SignInScreen() {
   const [loading, setLoading]   = useState<LoadingAction>(null);
   const [error, setError]       = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
+  const passwordRef             = useRef<TextInputRef>(null);
 
   function validate(): string | null {
     if (!email.trim())    return 'Please enter your email address.';
@@ -81,7 +83,13 @@ export function SignInScreen() {
           A confirmation link was sent to {email.trim()}.{'\n'}
           Confirm your account, then sign in.
         </Text>
-        <TouchableOpacity onPress={() => setSignedUp(false)} style={styles.link}>
+        <TouchableOpacity
+          onPress={() => setSignedUp(false)}
+          style={styles.link}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Back to sign in"
+        >
           <Text style={styles.linkText}>Back to Sign In</Text>
         </TouchableOpacity>
       </View>
@@ -99,8 +107,8 @@ export function SignInScreen() {
         contentContainerStyle={styles.form}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>IRIS</Text>
-        <Text style={styles.subtitle}>Sign in or create an account</Text>
+        <Text style={styles.wordmark}>IRIS</Text>
+        <Text style={styles.tagline}>Real-time event intelligence</Text>
 
         <TextInput
           style={styles.input}
@@ -109,22 +117,26 @@ export function SignInScreen() {
           placeholder="Email address"
           placeholderTextColor="#636366"
           keyboardType="email-address"
+          textContentType="emailAddress"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!!(!busy)}
+          editable={!busy}
           returnKeyType="next"
+          onSubmitEditing={() => passwordRef.current?.focus()}
         />
 
         <TextInput
+          ref={passwordRef}
           style={styles.input}
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
-          placeholder="Password (min. 6 characters)"
+          placeholder="Password"
           placeholderTextColor="#636366"
           secureTextEntry={true}
+          textContentType="password"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!!(!busy)}
+          editable={!busy}
           returnKeyType="done"
           onSubmitEditing={handleSignIn}
         />
@@ -135,6 +147,10 @@ export function SignInScreen() {
           style={[styles.button, !!busy && styles.buttonDisabled]}
           onPress={handleSignIn}
           disabled={!!busy}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={loading === 'signIn' ? 'Signing in' : 'Sign in'}
+          accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signIn'
             ? <ActivityIndicator color="#0d0d0d" size="small" />
@@ -146,6 +162,10 @@ export function SignInScreen() {
           style={[styles.buttonSecondary, !!busy && styles.buttonDisabled]}
           onPress={handleSignUp}
           disabled={!!busy}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={loading === 'signUp' ? 'Creating account' : 'Sign up'}
+          accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signUp'
             ? <ActivityIndicator color="#f2f2f2" size="small" />
@@ -173,6 +193,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 32,
     backgroundColor: '#0d0d0d',
+  },
+  wordmark: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#f2f2f2',
+    letterSpacing: 6,
+    marginBottom: 6,
+  },
+  tagline: {
+    fontSize: 13,
+    color: '#636366',
+    letterSpacing: 0.3,
+    marginBottom: 36,
   },
   title: {
     fontSize: 26,
@@ -234,7 +267,8 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: '#8e8e93',
+    fontWeight: '500',
+    color: '#aeaeb2',
     textDecorationLine: 'underline',
   },
 });

@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -11,24 +11,21 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { SignalButton } from '../components/SignalButton';
+import { StatusBadge } from '../components/StatusBadge';
 import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
-import { EventUpdate, SignalType } from '../types';
+import { formatRelativeTime } from '../lib/formatRelativeTime';
+import { scoreColor } from '../lib/eventUtils';
+import { EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
-// ── Helpers ───────────────────────────────────────────────────
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
-
 // ── Sub-components ────────────────────────────────────────────
 
-function UpdateItem({ update }: { update: EventUpdate }) {
+function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }) {
   const hasLink = !!update.source_url;
 
   function openLink() {
@@ -41,41 +38,33 @@ function UpdateItem({ update }: { update: EventUpdate }) {
   }
 
   return (
-    <View style={styles.updateItem}>
-      {hasLink ? (
-        <TouchableOpacity onPress={openLink} activeOpacity={0.7}>
-          <Text style={[styles.updateSource, styles.updateSourceLink]}>
-            {update.source_name} ↗
-          </Text>
-        </TouchableOpacity>
-      ) : (
-        <Text style={styles.updateSource}>{update.source_name}</Text>
-      )}
-      <Text style={styles.updateContent}>{update.content}</Text>
-      <Text style={styles.updateDate}>{formatDate(update.created_at)}</Text>
+    <View style={styles.updateRow}>
+      {/* Timeline gutter: dot + connector (omitted on last item) */}
+      <View style={styles.timelineGutter}>
+        <View style={styles.timelineDot} />
+        {!isLast && <View style={styles.timelineConnector} />}
+      </View>
+
+      {/* Update content */}
+      <View style={styles.updateBody}>
+        {hasLink ? (
+          <TouchableOpacity
+            onPress={openLink}
+            activeOpacity={0.7}
+            accessibilityRole="link"
+            accessibilityLabel={`${update.source_name}, opens in browser`}
+          >
+            <Text style={[styles.updateSource, styles.updateSourceLink]}>
+              {update.source_name} ↗
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={styles.updateSource}>{update.source_name}</Text>
+        )}
+        <Text style={styles.updateContent}>{update.content}</Text>
+        <Text style={styles.updateDate}>{formatRelativeTime(update.created_at)}</Text>
+      </View>
     </View>
-  );
-}
-
-interface SignalButtonProps {
-  label: string;
-  type: SignalType;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-}
-
-function SignalButton({ label, active, disabled, onPress }: SignalButtonProps) {
-  return (
-    <TouchableOpacity
-      style={[styles.signalBtn, !!active && styles.signalBtnActive]}
-      onPress={onPress}
-      disabled={!!disabled}
-    >
-      <Text style={[styles.signalBtnText, active && styles.signalBtnTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
   );
 }
 
@@ -87,7 +76,7 @@ interface SignalSectionProps {
 }
 
 function SignalSection({ eventId, userId }: SignalSectionProps) {
-  const { currentSignal, submitting, error, submitSignal } = useUserSignal(
+  const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
   );
@@ -95,22 +84,35 @@ function SignalSection({ eventId, userId }: SignalSectionProps) {
   return (
     <View style={styles.signalSection}>
       <View style={styles.signalButtons}>
-        <SignalButton
-          label="Confirm"
-          type="confirm"
-          active={!!(currentSignal === 'confirm')}
-          disabled={!!submitting}
-          onPress={() => submitSignal('confirm')}
-        />
-        <SignalButton
-          label="Dispute"
-          type="dispute"
-          active={!!(currentSignal === 'dispute')}
-          disabled={!!submitting}
-          onPress={() => submitSignal('dispute')}
-        />
+        {fetchLoading ? (
+          // Inert placeholder shapes while the initial signal fetch is in-flight.
+          // Prevents the idle-color → active-fill flash on navigation.
+          <>
+            <View style={[styles.signalBtnPlaceholder]} />
+            <View style={[styles.signalBtnPlaceholder]} />
+          </>
+        ) : (
+          <>
+            <SignalButton
+              type="confirm"
+              active={!!(currentSignal === 'confirm')}
+              loading={!!(submitting && currentSignal === 'confirm')}
+              disabled={!!submitting}
+              faded={!!(currentSignal !== null && currentSignal !== 'confirm')}
+              onPress={() => submitSignal('confirm')}
+            />
+            <SignalButton
+              type="dispute"
+              active={!!(currentSignal === 'dispute')}
+              loading={!!(submitting && currentSignal === 'dispute')}
+              disabled={!!submitting}
+              faded={!!(currentSignal !== null && currentSignal !== 'dispute')}
+              onPress={() => submitSignal('dispute')}
+            />
+          </>
+        )}
       </View>
-      {error && <Text style={styles.signalError}>{error}</Text>}
+      {!fetchLoading && error && <Text style={styles.signalError}>{error}</Text>}
     </View>
   );
 }
@@ -119,9 +121,8 @@ function SignalSection({ eventId, userId }: SignalSectionProps) {
 
 export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
-  const { event, updates, loading, error, refetch } = useEventDetail(eventId ?? '');
+  const { event, updates, loading, refreshing, error, refetch } = useEventDetail(eventId ?? '');
   const { userId } = useAuth();
-  const [refreshing, setRefreshing] = useState(false);
 
   // Dynamic header: event title + sign-out button
   useEffect(() => {
@@ -131,18 +132,15 @@ export function EventDetailScreen({ route, navigation }: Props) {
         <TouchableOpacity
           onPress={() => supabase.auth.signOut()}
           style={styles.signOutBtn}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
         >
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       ),
     });
   }, [event?.title, navigation]);
-
-  async function handleRefresh() {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  }
 
   if (!eventId) {
     return (
@@ -164,7 +162,13 @@ export function EventDetailScreen({ route, navigation }: Props) {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>Unable to load event.</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={refetch}>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={refetch}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading event"
+        >
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -172,44 +176,61 @@ export function EventDetailScreen({ route, navigation }: Props) {
   }
 
   const sourceLabel = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
+  const trustScore  = event.trust_score ?? 50;
+  const barColor    = scoreColor(trustScore);
 
   return (
     <FlatList
       style={styles.screen}
       data={updates}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <UpdateItem update={item} />}
+      renderItem={({ item, index }) => (
+        <UpdateItem update={item} isLast={index === updates.length - 1} />
+      )}
       contentContainerStyle={styles.list}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refetch}
           tintColor="#8e8e93"
         />
       }
       ListHeaderComponent={
         <View style={styles.header}>
           <Text style={styles.title}>{event.title}</Text>
-          <View style={styles.meta}>
-            <Text style={styles.metaText}>{event.status}</Text>
+
+          {/* Status badge + source count */}
+          <View style={styles.metaRow}>
+            <StatusBadge status={event.status} />
             <Text style={styles.metaDot}>·</Text>
-            <Text style={styles.metaText}>Trust: {event.trust_score}/100</Text>
-            <Text style={styles.metaDot}>·</Text>
-            <Text style={styles.metaText}>{sourceLabel}</Text>
+            <Text style={styles.metaDetail}>{sourceLabel}</Text>
           </View>
 
-          {userId && (
-            <SignalSection
-              eventId={event.id}
-              userId={userId}
+          {/* Trust score label + bar */}
+          <Text style={styles.scoreLabel}>
+            Trust{' '}
+            <Text style={[styles.scoreValue, { color: barColor }]}>{trustScore}</Text>
+            <Text style={styles.scoreMax}>/100</Text>
+          </Text>
+          <View style={styles.scoreBarBg}>
+            <View
+              style={[
+                styles.scoreBarFill,
+                { width: `${trustScore}%`, backgroundColor: barColor },
+              ]}
             />
-          )}
+          </View>
+
+          {userId && <SignalSection eventId={event.id} userId={userId} />}
 
           <Text style={styles.sectionLabel}>Timeline</Text>
         </View>
       }
       ListEmptyComponent={
-        <Text style={styles.emptyText}>No updates yet.</Text>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>No updates yet.</Text>
+          <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+        </View>
       }
     />
   );
@@ -232,72 +253,119 @@ const styles = StyleSheet.create({
   list: {
     padding: 16,
   },
+
+  // ── Header ──
   header: {
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#f2f2f2',
     marginBottom: 8,
   },
-  meta: {
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#f2f2f2',
+    lineHeight: 30,
+    marginBottom: 10,
+  },
+
+  // ── Status badge + meta row ──
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 14,
     flexWrap: 'wrap',
-  },
-  metaText: {
-    fontSize: 13,
-    color: '#8e8e93',
   },
   metaDot: {
     fontSize: 13,
     color: '#3a3a3c',
   },
-  signalSection: {
+  metaDetail: {
+    fontSize: 13,
+    color: '#8e8e93',
+  },
+
+  // ── Trust score ──
+  scoreLabel: {
+    fontSize: 13,
+    color: '#8e8e93',
+    marginBottom: 6,
+  },
+  scoreValue: {
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  scoreMax: {
+    color: '#8e8e93',
+    fontSize: 13,
+  },
+  scoreBarBg: {
+    height: 5,
+    backgroundColor: '#2c2c2e',
+    borderRadius: 3,
+    overflow: 'hidden',
     marginBottom: 20,
+  },
+  scoreBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+
+  // ── Signal section ──
+  signalSection: {
+    marginBottom: 24,
   },
   signalButtons: {
     flexDirection: 'row',
     gap: 10,
   },
-  signalBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 9,
+  // Placeholder shape shown while fetchLoading — matches SignalButton dimensions.
+  signalBtnPlaceholder: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#3a3a3c',
-    borderRadius: 6,
-  },
-  signalBtnActive: {
-    backgroundColor: '#f2f2f2',
-    borderColor: '#f2f2f2',
-  },
-  signalBtnText: {
-    fontSize: 14,
-    color: '#8e8e93',
-  },
-  signalBtnTextActive: {
-    color: '#0d0d0d',
+    borderColor: '#2c2c2e',
   },
   signalError: {
-    marginTop: 6,
+    marginTop: 8,
     fontSize: 12,
     color: '#ff453a',
   },
+
+  // ── Section label ──
   sectionLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#aeaeb2',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2c2c2e',
-    paddingBottom: 8,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#636366',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 16,
   },
-  updateItem: {
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2c2c2e',
+
+  // ── Timeline items ──
+  updateRow: {
+    flexDirection: 'row',
+  },
+  timelineGutter: {
+    width: 22,
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  timelineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#3a3a3c',
+  },
+  timelineConnector: {
+    flex: 1,
+    width: 1,
+    backgroundColor: '#2c2c2e',
+    marginTop: 5,
+  },
+  updateBody: {
+    flex: 1,
+    paddingBottom: 20,
+    paddingLeft: 2,
   },
   updateSource: {
     fontSize: 12,
@@ -319,10 +387,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#636366',
   },
+
+  // ── Empty / error ──
+  emptyContainer: {
+    paddingTop: 12,
+  },
   emptyText: {
     fontSize: 14,
     color: '#8e8e93',
-    marginTop: 12,
+    marginBottom: 4,
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: '#636366',
   },
   errorText: {
     fontSize: 16,
@@ -331,14 +408,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   retryButton: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#3a3a3c',
-    borderRadius: 6,
+    borderRadius: 8,
   },
   retryText: {
     fontSize: 14,
+    fontWeight: '600',
     color: '#f2f2f2',
   },
   signOutBtn: {
