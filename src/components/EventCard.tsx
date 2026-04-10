@@ -88,6 +88,9 @@ export function EventCard({
         onPress={() => submitSignal(type)}
         disabled={!!(isSelected || submitting)}
         activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={isConfirm ? 'Confirm event' : 'Dispute event'}
+        accessibilityState={{ selected: isSelected, disabled: !!(isSelected || submitting) }}
       >
         {submitting && isSelected ? (
           <ActivityIndicator size="small" color="#fff" />
@@ -105,6 +108,9 @@ export function EventCard({
       style={[styles.card, { borderLeftColor: statusColor }]}
       onPress={onPress}
       activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={`${event.title}, ${STATUS_LABEL[event.status] ?? event.status}`}
+      accessibilityHint="Opens event details"
     >
       {/* Title */}
       <Text style={styles.cardTitle} numberOfLines={2}>
@@ -144,6 +150,9 @@ export function EventCard({
         </Text>
         <Text style={styles.cardAge}>{formatRelativeTime(event.created_at)}</Text>
       </View>
+
+      {/* Divider: separates content area from signal actions */}
+      <View style={styles.actionsDivider} />
 
       {/* Signal buttons */}
       <View style={styles.actions}>
@@ -230,18 +239,23 @@ const styles = StyleSheet.create({
   },
 
   // ── Signal buttons ──
+  actionsDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#2c2c2e',
+    marginBottom: 10,
+  },
   actions: {
     flexDirection: 'row',
     gap: 10,
   },
   actionBtn: {
     flex: 1,
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 36,
+    minHeight: 40,
   },
   actionText: {
     fontSize: 13,

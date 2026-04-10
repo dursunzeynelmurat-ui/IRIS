@@ -44,6 +44,9 @@ export function EventListScreen({ navigation }: Props) {
         <TouchableOpacity
           onPress={() => supabase.auth.signOut()}
           style={styles.signOutBtn}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
         >
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
@@ -67,7 +70,13 @@ export function EventListScreen({ navigation }: Props) {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>Unable to load events.</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={refetch}>
+        <TouchableOpacity
+          style={styles.retryBtn}
+          onPress={refetch}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading events"
+        >
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -95,6 +104,9 @@ export function EventListScreen({ navigation }: Props) {
               ]}
               onPress={() => setActiveFilter(key)}
               activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityLabel={key === 'all' ? 'All events' : `${label} events`}
+              accessibilityState={{ selected: isActive }}
             >
               <Text style={[
                 styles.filterChipText,

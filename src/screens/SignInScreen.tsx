@@ -81,7 +81,13 @@ export function SignInScreen() {
           A confirmation link was sent to {email.trim()}.{'\n'}
           Confirm your account, then sign in.
         </Text>
-        <TouchableOpacity onPress={() => setSignedUp(false)} style={styles.link}>
+        <TouchableOpacity
+          onPress={() => setSignedUp(false)}
+          style={styles.link}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Back to sign in"
+        >
           <Text style={styles.linkText}>Back to Sign In</Text>
         </TouchableOpacity>
       </View>
@@ -135,6 +141,10 @@ export function SignInScreen() {
           style={[styles.button, !!busy && styles.buttonDisabled]}
           onPress={handleSignIn}
           disabled={!!busy}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={loading === 'signIn' ? 'Signing in' : 'Sign in'}
+          accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signIn'
             ? <ActivityIndicator color="#0d0d0d" size="small" />
@@ -146,6 +156,10 @@ export function SignInScreen() {
           style={[styles.buttonSecondary, !!busy && styles.buttonDisabled]}
           onPress={handleSignUp}
           disabled={!!busy}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={loading === 'signUp' ? 'Creating account' : 'Sign up'}
+          accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signUp'
             ? <ActivityIndicator color="#f2f2f2" size="small" />

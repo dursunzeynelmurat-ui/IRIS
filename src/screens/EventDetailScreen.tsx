@@ -23,7 +23,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
 // ── Sub-components ────────────────────────────────────────────
 
-function UpdateItem({ update }: { update: EventUpdate }) {
+function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }) {
   const hasLink = !!update.source_url;
 
   function openLink() {
@@ -37,16 +37,21 @@ function UpdateItem({ update }: { update: EventUpdate }) {
 
   return (
     <View style={styles.updateRow}>
-      {/* Timeline gutter: dot + connector line */}
+      {/* Timeline gutter: dot + connector line (connector omitted on last item) */}
       <View style={styles.timelineGutter}>
         <View style={styles.timelineDot} />
-        <View style={styles.timelineConnector} />
+        {!isLast && <View style={styles.timelineConnector} />}
       </View>
 
       {/* Update content */}
       <View style={styles.updateBody}>
         {hasLink ? (
-          <TouchableOpacity onPress={openLink} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={openLink}
+            activeOpacity={0.7}
+            accessibilityRole="link"
+            accessibilityLabel={`${update.source_name}, opens in browser`}
+          >
             <Text style={[styles.updateSource, styles.updateSourceLink]}>
               {update.source_name} ↗
             </Text>
@@ -82,6 +87,9 @@ function SignalButton({ label, type, active, loading, disabled, onPress }: Signa
       onPress={onPress}
       disabled={!!disabled}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`${label} event`}
+      accessibilityState={{ selected: active, disabled: !!disabled }}
     >
       {loading ? (
         <ActivityIndicator size="small" color="#fff" />
@@ -159,6 +167,9 @@ export function EventDetailScreen({ route, navigation }: Props) {
         <TouchableOpacity
           onPress={() => supabase.auth.signOut()}
           style={styles.signOutBtn}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
         >
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
@@ -192,7 +203,13 @@ export function EventDetailScreen({ route, navigation }: Props) {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>Unable to load event.</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={refetch}>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={refetch}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading event"
+        >
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -209,7 +226,9 @@ export function EventDetailScreen({ route, navigation }: Props) {
       style={styles.screen}
       data={updates}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <UpdateItem update={item} />}
+      renderItem={({ item, index }) => (
+        <UpdateItem update={item} isLast={index === updates.length - 1} />
+      )}
       contentContainerStyle={styles.list}
       refreshControl={
         <RefreshControl
