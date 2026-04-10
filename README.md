@@ -121,10 +121,10 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
 |---|---|---|
 | `events` | Public | — (service role only via ingestion script) |
 | `event_updates` | Public | — (service role only via ingestion script) |
-| `signals` | Own rows only | Own rows only (INSERT, UPDATE, DELETE) |
+| `signals` | Own rows only | INSERT + UPDATE own rows only (no DELETE — protected by RESTRICTIVE deny) |
 | `users` | Own row only | — (created by trigger on auth.users INSERT) |
 
-> **Security note:** Migrations 004 and 005 add `RESTRICTIVE` deny policies on `events`, `event_updates`, and `users` for the `authenticated` role. These are ANDed with all permissive policies — no future accidental permissive policy can re-open a write path. The ingestion script uses the service-role key which bypasses RLS and is unaffected.
+> **Security note:** Migrations 004, 005, and 007 add `RESTRICTIVE` deny policies on `events`, `event_updates`, `users`, and `signals` DELETE for the `authenticated` role. These are ANDed with all permissive policies — no future accidental permissive policy can re-open a blocked path. The `signals_update_own` policy additionally uses `WITH CHECK (auth.uid() = user_id)` (migration 007) to prevent post-update field reassignment. The ingestion script uses the service-role key which bypasses RLS and is unaffected.
 
 ---
 
@@ -458,6 +458,8 @@ supabase/migrations/003_fix_source_count_trigger.sql
 supabase/migrations/004_explicit_deny_policies.sql
 supabase/migrations/005_deny_event_updates_insert.sql
 supabase/migrations/006_signals_trust_score_trigger.sql
+supabase/migrations/007_signal_integrity.sql
+supabase/migrations/008_source_count_trigger_hardening.sql
 ```
 
 **4. Enable Realtime** in Supabase Dashboard → Database → Replication:
@@ -503,7 +505,7 @@ npx expo start
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
 - Ingestion script (`npx tsx supabase/seed/ingest.ts`) with duplicate guard (15 seed events)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
-- Security: explicit RESTRICTIVE deny policies (migrations 004, 005) on events, event_updates, users; trust score trigger is SECURITY DEFINER to correctly bypass the authenticated deny on events UPDATE (migration 006)
+- Security: explicit RESTRICTIVE deny policies (migrations 004, 005, 007) on events, event_updates, users, and signals DELETE; `signals_update_own` WITH CHECK prevents post-update field reassignment (migration 007); trust score trigger is SECURITY DEFINER (migration 006); source_count trigger hardened to SECURITY DEFINER and dead function removed (migration 008)
 
 ### Not Implemented
 
