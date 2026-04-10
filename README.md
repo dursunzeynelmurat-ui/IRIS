@@ -179,6 +179,7 @@ src/
 ├── context/
 │   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
 ├── lib/
+│   ├── eventUtils.ts        # STATUS_LABEL, STATUS_COLOR, scoreColor — single source of truth for all status display logic
 │   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
 │   └── supabase.ts          # Supabase client (env-var validated, chunked SecureStore)
 ├── hooks/
@@ -237,7 +238,7 @@ Three-state conditional render:
 
 | State | Renders |
 |---|---|
-| `loading === true` | `ActivityIndicator` spinner |
+| `loading === true` | Branded splash screen (IRIS wordmark + muted spinner) |
 | `userId === null` | `SignInScreen` (outside navigator) |
 | `userId` set | `NavigationContainer` + stack |
 
@@ -335,9 +336,9 @@ Fetches all signals for the current user in a single query. Returns a `Map<event
 
 ### `useUserSignal(eventId, userId)` — detail screen single fetch
 
-Returns `{ currentSignal, submitting, error, submitSignal }`.
+Returns `{ currentSignal, fetchLoading, submitting, error, submitSignal }`.
 
-**On mount:** fetches existing signal from DB via `.maybeSingle()`.
+**On mount:** fetches existing signal from DB via `.maybeSingle()`. `fetchLoading` is `true` until this resolves — `EventDetailScreen` renders inert placeholder button shapes during this window to avoid the idle-colored → active-filled flash that would otherwise occur on navigation.
 Used only by `EventDetailScreen` (single-event context).
 
 **On `submitSignal(type)`:**
@@ -365,9 +366,10 @@ Used only by `EventDetailScreen` (single-event context).
 | Empty | "No events yet." |
 | Data | `FlatList` of event rows |
 
-Each card: title, colored status badge, trust score bar, Confirm/Dispute buttons.  
-Vote state seeded from `useUserSignals` bulk fetch (one query for all cards); selected button fills solid, other fades.  
-Pull-to-refresh supported. Header: Sign Out button.
+Each card: title, colored status badge (colored border + text + subtle background tint), trust score bar (color-coded: green ≥67 / orange ≥34 / red <34), Confirm/Dispute signal buttons.  
+Signal buttons: semantic color system — idle state uses colored border + colored text (green for Confirm, red for Dispute); active state uses filled background + white text; submitting state shows white spinner on colored fill.  
+Vote state seeded from `useUserSignals` bulk fetch (one query for all cards); selected button fills solid, unselected fades (opacity 0.35).  
+Pull-to-refresh supported. Header: IRIS wordmark (letter-spaced) + Sign Out button.
 
 ### Event Detail Screen
 
@@ -377,14 +379,20 @@ Pull-to-refresh supported. Header: Sign Out button.
 | Error | Message + Retry button |
 | Data | Header + timeline list |
 
-Header: title, status, trust score, signal section.  
-Timeline: source name, content, formatted timestamp (invalid date → `—`).
+Header: title (22px/700), colored status badge (matching EventCard style), trust score label + color-coded progress bar, signal section.  
+Signal section: while `fetchLoading` is true, renders neutral placeholder button shapes to prevent the idle-color flash; once resolved, renders full Confirm/Dispute buttons with semantic colors matching EventCard.  
+Timeline: structured with left-gutter dot + connector line; each item shows source name (linked if URL present), content text, and relative timestamp.
 
 ### Signal Section
 
-Shown in the `EventDetailScreen` header. The screen is only reachable when authenticated (App.tsx auth gate), so `SignalSection` always renders the signed-in state:
+Shown in the `EventDetailScreen` header. The screen is only reachable when authenticated (App.tsx auth gate), so `SignalSection` always renders the signed-in state.
 
-Confirm + Dispute buttons side by side. Active button: filled background. Both disabled while `submitting`. Inline error shown below buttons on failure.
+Three visual states:
+1. **Fetching** (`fetchLoading`): two neutral placeholder button shapes; prevents idle-color flash while the initial signal fetch completes
+2. **Idle**: Confirm button with green border + green text; Dispute button with red border + red text
+3. **Active**: selected button filled with accent color + white text; unselected button unchanged; both disabled while `submitting`
+
+Inline error shown below buttons on submission failure.
 
 ---
 
@@ -481,24 +489,27 @@ npx expo start
 
 ### Implemented
 
-- Event feed (list + detail) with full dark UI design system
-- EventCard: status badge (color per status), trust score bar, source count, relative timestamp, Confirm/Dispute buttons
+- Event feed (list + detail) with dark-theme design system (premium, calm, information-dense)
+- EventCard: status badge with semantic color + subtle tint fill, trust score bar (color-coded), source count, relative timestamp, Confirm/Dispute signal buttons
+  - Signal buttons: semantic idle colors (green/red border + text); active state (filled background + white text); submitting state (white spinner on fill); non-selected fades at 0.35 opacity
 - Status filter tab bar on event list (All / Emerging / Developing / Verified / Disputed) — client-side, no extra fetch
 - Pull-to-refresh on both event list and event detail screens
-- Timeline updates (chronological, per event) with tappable source URLs (opens in browser)
+- Timeline updates with left-gutter dot + connector visual; tappable source URLs (opens in browser); relative timestamps
 - Dynamic navigation header title on EventDetail (shows event title once loaded)
-- Source count displayed on both EventCard and EventDetail header
+- Source count + trust score bar displayed on both EventCard and EventDetail header
 - User signaling (confirm / dispute) on both list cards and detail screen
   - List: vote state seeded from bulk fetch (`useUserSignals`) — one query for all cards
-  - Detail: per-event fetch via `useUserSignal`
-  - Optimistic update with revert on failure; state persists across navigation
+  - Detail: per-event fetch via `useUserSignal`; `fetchLoading` skeleton prevents visual flash on navigation; optimistic update with revert on failure; state persists across navigation
 - Trust score calculation (server-side Postgres trigger + SECURITY DEFINER function — atomic, always in sync)
 - Realtime synchronization:
   - List screen: `events-feed` channel handles both UPDATE (trust score, status) and INSERT (new events, prepended + deduplicated)
   - Detail screen: two channels for event UPDATE + event_updates INSERT (deduped by id)
 - Authentication (email + password via `signInWithPassword` / `signUp`)
+  - Branded launch screen (IRIS wordmark + muted spinner) during auth check
+  - IRIS wordmark (letter-spaced) on both SignIn screen and navigation header
   - Email regex validation before Supabase call
   - Sign Out button accessible from both EventList and EventDetail headers
+- Shared event display constants (`src/lib/eventUtils.ts`): STATUS_LABEL, STATUS_COLOR, scoreColor — single source of truth across all three screens
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
 - Ingestion script (`npx tsx supabase/seed/ingest.ts`) with duplicate guard (15 seed events)
