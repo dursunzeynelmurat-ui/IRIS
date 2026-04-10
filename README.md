@@ -226,8 +226,11 @@ supabase/
 │   ├── normalize.ts               # normalizeSourceItem(): RawSourceItem → NormalizedEvent
 │   ├── ingest.ts                  # ingestEvent(): write gate (calls ingest_event RPC only)
 │   ├── run.ts                     # CLI runner: --adapter=<name> [--dry-run] [--limit=N]
-│   └── adapters/
-│       └── sample.ts              # SampleAdapter — 15 mock events for dev/testing
+│   ├── adapters/
+│   │   ├── sample.ts              # SampleAdapter — 15 mock events for dev/testing
+│   │   └── fixture.ts             # FixtureAdapter — reads RawSourceItem[] from a JSON file
+│   └── fixtures/
+│       └── example.json           # Example fixture: 3 items showing full RawSourceItem shape
 ├── scripts/
 │   └── verify_db.sql              # Read-only schema verification (run after applying all migrations)
 └── seed/
@@ -509,13 +512,19 @@ supabase/migrations/016_compute_trust_score_formula.sql
 ```bash
 # Add SUPABASE_SERVICE_KEY to .env first (service_role key from Supabase dashboard)
 
-# Option A — Dry run: see what would be ingested, no DB writes
+# Option A — Dry run (sample adapter, no DB writes)
 npx tsx supabase/ingestion/run.ts --dry-run
 
-# Option B — Ingest sample events via the structured pipeline
+# Option B — Dry run from fixture file (edit fixtures/example.json first)
+npx tsx supabase/ingestion/run.ts --adapter=fixture --dry-run
+
+# Option C — Ingest sample events (15 realistic mock events)
 npx tsx supabase/ingestion/run.ts --adapter=sample
 
-# Option C — Quick seed shorthand (same events, no adapter layer)
+# Option D — Ingest from fixture file
+npx tsx supabase/ingestion/run.ts --adapter=fixture
+
+# Option E — Quick seed shorthand (same events, bypasses adapter/normalize layers)
 npx tsx supabase/seed/ingest.ts
 ```
 
@@ -555,7 +564,9 @@ npx expo start
   - `normalize.ts`: `normalizeSourceItem()` — validates headline/status/content/source_name, trims whitespace, assembles updates array; throws `NormalizationError` on bad input
   - `ingest.ts`: `ingestEvent()` — write gate, calls `ingest_event` RPC, returns `ok` / `skipped` / `error`
   - `run.ts`: CLI runner `npx tsx supabase/ingestion/run.ts [--adapter=sample] [--dry-run] [--limit=N]`
-  - `adapters/sample.ts`: `SampleAdapter` — 15 mock events in `RawSourceItem` shape; add real adapters here
+  - `adapters/sample.ts`: `SampleAdapter` — 15 mock events in `RawSourceItem` shape
+  - `adapters/fixture.ts`: `FixtureAdapter` — reads `RawSourceItem[]` from `fixtures/example.json` (or `FIXTURE_PATH` env var); use for testing normalization against arbitrary real-world data without writing code
+  - `fixtures/example.json`: 3-item example showing full `RawSourceItem` shape (all fields including optional ones)
 - Quick seed script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC directly (bypasses adapter/normalize layers)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
 - Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER

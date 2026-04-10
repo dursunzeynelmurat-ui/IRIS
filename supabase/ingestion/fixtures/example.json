@@ -1,0 +1,38 @@
+[
+  {
+    "headline": "Severe storm warning — coastal areas on alert",
+    "status": "emerging",
+    "content": "National meteorological service issues severe storm warning for coastal regions.",
+    "source_name": "Met Office",
+    "source_url": "https://www.metoffice.gov.uk",
+    "additional_updates": [
+      {
+        "content": "Wind speeds expected to reach 90km/h; authorities urge residents to stay indoors.",
+        "source_name": "Civil Emergency Authority"
+      },
+      {
+        "content": "Ferry services suspended until further notice.",
+        "source_name": "Port Authority",
+        "source_url": "https://example.com/port-notice"
+      }
+    ]
+  },
+  {
+    "headline": "Factory fire — industrial district evacuated",
+    "status": "developing",
+    "content": "Large fire broke out in a chemical storage facility at 09:15 local time.",
+    "source_name": "Fire Brigade",
+    "additional_updates": [
+      {
+        "content": "500-metre exclusion zone established; 12 workers treated for smoke inhalation.",
+        "source_name": "Emergency Services"
+      }
+    ]
+  },
+  {
+    "headline": "Rail strike — national network disrupted",
+    "status": "verified",
+    "content": "24-hour strike by rail workers begins midnight Monday; most intercity routes suspended.",
+    "source_name": "Rail Operators Association"
+  }
+]

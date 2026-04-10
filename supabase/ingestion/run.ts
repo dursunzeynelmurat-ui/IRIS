@@ -9,7 +9,7 @@
  *
  * Options:
  *   --adapter=<name>   Adapter to use. Default: sample
- *                      Available: sample
+ *                      Available: sample, fixture
  *   --dry-run          Normalize items and log what would be ingested.
  *                      Does NOT write to Supabase. Safe to run anytime.
  *   --limit=N          Process only the first N items from the adapter.
@@ -38,15 +38,20 @@ import { createIngestionClient } from './client';
 import { normalizeSourceItem, NormalizationError } from './normalize';
 import { ingestEvent } from './ingest';
 import { SampleAdapter } from './adapters/sample';
+import { FixtureAdapter } from './adapters/fixture';
 import type { SourceAdapter, IngestionResult } from './types';
 
 // ── Adapter registry ────────────────────────────────────────────────────────
 //
 // Add new adapters here as they are implemented.
 // Key = value used in --adapter=<key> CLI argument.
+//
+// fixture: reads RawSourceItem[] from fixtures/example.json (or FIXTURE_PATH env var)
+// sample:  hardcoded mock events for dev/testing (15 realistic events)
 
 const ADAPTERS: Record<string, SourceAdapter> = {
-  sample: new SampleAdapter(),
+  sample:  new SampleAdapter(),
+  fixture: new FixtureAdapter(),
 };
 
 // ── CLI arg parsing ─────────────────────────────────────────────────────────
