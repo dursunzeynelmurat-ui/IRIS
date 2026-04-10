@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -53,6 +53,20 @@ export function EventCard({
   const [currentSignal, setCurrentSignal] = useState<SignalType | null>(initialSignal);
   const [submitting, setSubmitting] = useState(false);
 
+  // hasLocalSubmit tracks whether the user has interacted with THIS card in the
+  // current mount. Before any local submit, initialSignal changes (e.g. when the
+  // parent's bulk fetch resolves after the FlatList has already rendered) are
+  // synced into local state. Once the user has submitted, local state is
+  // authoritative and prop changes are ignored to preserve optimistic updates.
+  // The ref resets on unmount, so remounts re-accept the (now-current) parent value.
+  const hasLocalSubmit = useRef(false);
+
+  useEffect(() => {
+    if (!hasLocalSubmit.current) {
+      setCurrentSignal(initialSignal);
+    }
+  }, [initialSignal]);
+
   const statusColor = STATUS_COLOR[event.status] ?? '#888';
   const trustScore  = event.trust_score ?? 50;
   const barColor    = scoreColor(trustScore);
@@ -60,6 +74,7 @@ export function EventCard({
   async function submitSignal(type: SignalType) {
     if (type === currentSignal) return; // no-op: already active
     if (submitting) return;
+    hasLocalSubmit.current = true; // local state is authoritative from here on
 
     const previous = currentSignal;
     setCurrentSignal(type); // optimistic update
