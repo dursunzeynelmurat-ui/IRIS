@@ -99,8 +99,8 @@ export function SignInScreen() {
         contentContainerStyle={styles.form}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>IRIS</Text>
-        <Text style={styles.subtitle}>Sign in or create an account</Text>
+        <Text style={styles.wordmark}>IRIS</Text>
+        <Text style={styles.tagline}>Real-time event intelligence</Text>
 
         <TextInput
           style={styles.input}
@@ -173,6 +173,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 32,
     backgroundColor: '#0d0d0d',
+  },
+  wordmark: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#f2f2f2',
+    letterSpacing: 6,
+    marginBottom: 6,
+  },
+  tagline: {
+    fontSize: 13,
+    color: '#636366',
+    letterSpacing: 0.3,
+    marginBottom: 36,
   },
   title: {
     fontSize: 26,

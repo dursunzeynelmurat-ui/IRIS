@@ -36,7 +36,7 @@ function scoreColor(score: number): string {
 
 interface EventCardProps {
   event: Event;
-  userId: string;               // always non-null — list screen is auth-gated
+  userId: string;                   // always non-null — list screen is auth-gated
   initialSignal: SignalType | null; // pre-seeded by bulk fetch in EventListScreen
   onSignalCast: (type: SignalType) => void; // notifies parent to keep map current
   onPress: () => void;
@@ -93,17 +93,17 @@ export function EventCard({
   }
 
   function voteButton(type: SignalType) {
-    const isConfirm  = type === 'confirm';
-    const isSelected = currentSignal === type;
-    const isOther    = currentSignal !== null && currentSignal !== type;
+    const isConfirm   = type === 'confirm';
+    const isSelected  = currentSignal === type;
+    const isOther     = currentSignal !== null && currentSignal !== type;
+    const accentColor = isConfirm ? '#30d158' : '#ff453a';
 
     return (
       <TouchableOpacity
         style={[
           styles.actionBtn,
-          isConfirm
-            ? isSelected ? styles.confirmActive : styles.confirmIdle
-            : isSelected ? styles.disputeActive  : styles.disputeIdle,
+          { borderColor: accentColor },
+          isSelected && { backgroundColor: accentColor },
           isOther && styles.btnFaded,
         ]}
         onPress={() => submitSignal(type)}
@@ -111,18 +111,10 @@ export function EventCard({
         activeOpacity={0.8}
       >
         {submitting && isSelected ? (
-          <ActivityIndicator
-            size="small"
-            color={isConfirm ? '#30d158' : '#ff453a'}
-          />
+          <ActivityIndicator size="small" color="#fff" />
         ) : (
-          <Text
-            style={[
-              styles.actionText,
-              isSelected && (isConfirm ? styles.confirmActiveText : styles.disputeActiveText),
-            ]}
-          >
-            {isConfirm ? '✓  Confirm' : '✗  Dispute'}
+          <Text style={[styles.actionText, { color: isSelected ? '#fff' : accentColor }]}>
+            {isConfirm ? 'Confirm' : 'Dispute'}
           </Text>
         )}
       </TouchableOpacity>
@@ -190,7 +182,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1c1c1e',
     borderRadius: 12,
     padding: 16,
-    borderLeftWidth: 3,
+    borderLeftWidth: 4,
   },
   cardTitle: {
     fontSize: 16,
@@ -232,18 +224,33 @@ const styles = StyleSheet.create({
 
   // ── Score bar ──
   scoreBarBg: {
-    height: 4,
+    height: 5,
     backgroundColor: '#2c2c2e',
-    borderRadius: 2,
+    borderRadius: 3,
     overflow: 'hidden',
     marginBottom: 14,
   },
   scoreBarFill: {
     height: '100%',
-    borderRadius: 2,
+    borderRadius: 3,
   },
 
-  // ── Action buttons ──
+  // ── Footer ──
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  sourceCount: {
+    fontSize: 11,
+    color: '#636366',
+  },
+  cardAge: {
+    fontSize: 11,
+    color: '#636366',
+  },
+
+  // ── Signal buttons ──
   actions: {
     flexDirection: 'row',
     gap: 10,
@@ -257,47 +264,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 36,
   },
-  confirmIdle: {
-    borderColor: '#30d158',
-    backgroundColor: 'transparent',
-  },
-  confirmActive: {
-    borderColor: '#30d158',
-    backgroundColor: '#30d158',
-  },
-  disputeIdle: {
-    borderColor: '#ff453a',
-    backgroundColor: 'transparent',
-  },
-  disputeActive: {
-    borderColor: '#ff453a',
-    backgroundColor: '#ff453a',
-  },
   actionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#8e8e93',
-  },
-  confirmActiveText: {
-    color: '#fff',
-  },
-  disputeActiveText: {
-    color: '#fff',
   },
   btnFaded: {
-    opacity: 0.3,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  sourceCount: {
-    fontSize: 11,
-    color: '#636366',
-  },
-  cardAge: {
-    fontSize: 11,
-    color: '#636366',
+    opacity: 0.35,
   },
 });
