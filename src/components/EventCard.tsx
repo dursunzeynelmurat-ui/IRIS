@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SignalButton } from './SignalButton';
+import { StatusBadge } from './StatusBadge';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
 import { STATUS_COLOR, STATUS_LABEL, scoreColor } from '../lib/eventUtils';
 import { castSignal } from '../services/signalService';
@@ -71,38 +72,6 @@ export function EventCard({
     setSubmitting(false);
   }
 
-  function voteButton(type: SignalType) {
-    const isConfirm   = type === 'confirm';
-    const isSelected  = currentSignal === type;
-    const isOther     = currentSignal !== null && currentSignal !== type;
-    const accentColor = isConfirm ? '#30d158' : '#ff453a';
-
-    return (
-      <TouchableOpacity
-        style={[
-          styles.actionBtn,
-          { borderColor: accentColor },
-          isSelected && { backgroundColor: accentColor },
-          isOther && styles.btnFaded,
-        ]}
-        onPress={() => submitSignal(type)}
-        disabled={!!(isSelected || submitting)}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-        accessibilityLabel={isConfirm ? 'Confirm event' : 'Dispute event'}
-        accessibilityState={{ selected: isSelected, disabled: !!(isSelected || submitting) }}
-      >
-        {submitting && isSelected ? (
-          <ActivityIndicator size="small" color="#fff" />
-        ) : (
-          <Text style={[styles.actionText, { color: isSelected ? '#fff' : accentColor }]}>
-            {isConfirm ? 'Confirm' : 'Dispute'}
-          </Text>
-        )}
-      </TouchableOpacity>
-    );
-  }
-
   return (
     <TouchableOpacity
       style={[styles.card, { borderLeftColor: statusColor }]}
@@ -119,11 +88,7 @@ export function EventCard({
 
       {/* Status badge + trust score */}
       <View style={styles.cardMeta}>
-        <View style={[styles.badge, { borderColor: statusColor, backgroundColor: statusColor + '18' }]}>
-          <Text style={[styles.badgeText, { color: statusColor }]}>
-            {STATUS_LABEL[event.status] ?? event.status}
-          </Text>
-        </View>
+        <StatusBadge status={event.status} />
         <Text style={styles.scoreLabel}>
           Trust{' '}
           <Text style={[styles.scoreValue, { color: barColor }]}>
@@ -156,8 +121,20 @@ export function EventCard({
 
       {/* Signal buttons */}
       <View style={styles.actions}>
-        {voteButton('confirm')}
-        {voteButton('dispute')}
+        {(['confirm', 'dispute'] as SignalType[]).map((type) => {
+          const isSelected = currentSignal === type;
+          return (
+            <SignalButton
+              key={type}
+              type={type}
+              active={isSelected}
+              loading={!!(submitting && isSelected)}
+              disabled={!!(isSelected || submitting)}
+              faded={!!(currentSignal !== null && !isSelected)}
+              onPress={() => submitSignal(type)}
+            />
+          );
+        })}
       </View>
     </TouchableOpacity>
   );
@@ -184,18 +161,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
-  },
-  badge: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   scoreLabel: {
     fontSize: 13,
@@ -247,21 +212,5 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     gap: 10,
-  },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 40,
-  },
-  actionText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  btnFaded: {
-    opacity: 0.35,
   },
 });
