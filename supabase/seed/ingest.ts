@@ -46,8 +46,10 @@ interface EventPayload {
 
 // ── Core ingestion function ────────────────────────────────────
 //
-// Delegates to the DB function `ingest_event` (migration 011), which:
-//   - Acquires an advisory lock on the title hash to prevent TOCTOU duplicates
+// Delegates to the DB function `ingest_event` (migrations 011–012), which:
+//   - Validates inputs: non-empty title, valid status, non-empty updates array,
+//     required fields on each update object
+//   - Acquires an advisory lock on the trimmed title hash (TOCTOU safe)
 //   - Inserts the event row and all update rows in a single transaction
 //   - Returns NULL if a duplicate title was found within the last 10 minutes
 //   - Returns the new event UUID on success
@@ -68,6 +70,8 @@ async function ingestEvent(payload: EventPayload): Promise<void> {
   });
 
   if (error) {
+    // Includes validation errors from the DB (empty title, empty updates,
+    // missing required fields, invalid status) as well as DB-level failures.
     console.error(`[ERROR] Failed to ingest "${title}":`, error.message);
     return;
   }
