@@ -45,54 +45,39 @@ interface EventPayload {
 }
 
 // ── Core ingestion function ────────────────────────────────────
-
-const DUPLICATE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+//
+// Delegates to the DB function `ingest_event` (migration 011), which:
+//   - Acquires an advisory lock on the title hash to prevent TOCTOU duplicates
+//   - Inserts the event row and all update rows in a single transaction
+//   - Returns NULL if a duplicate title was found within the last 10 minutes
+//   - Returns the new event UUID on success
+//
+// Using the service-role client: bypasses RLS, authorized for this function.
 
 async function ingestEvent(payload: EventPayload): Promise<void> {
   const { title, status, updates } = payload;
 
-  // Duplicate check: same title within the last 10 minutes
-  const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
-  const { data: existing } = await supabase
-    .from('events')
-    .select('id')
-    .eq('title', title)
-    .gte('created_at', since)
-    .maybeSingle();
+  const { data: eventId, error } = await supabase.rpc('ingest_event', {
+    p_title: title,
+    p_status: status,
+    p_updates: updates.map((u) => ({
+      content: u.content,
+      source_name: u.source_name,
+      source_url: u.source_url ?? null,
+    })),
+  });
 
-  if (existing) {
+  if (error) {
+    console.error(`[ERROR] Failed to ingest "${title}":`, error.message);
+    return;
+  }
+
+  if (eventId === null) {
     console.log(`[SKIP] Duplicate within 10 min: "${title}"`);
     return;
   }
 
-  // Insert event
-  const { data: event, error: eventError } = await supabase
-    .from('events')
-    .insert({ title, status })
-    .select('id')
-    .single();
-
-  if (eventError || !event) {
-    console.error(`[ERROR] Failed to insert event "${title}":`, eventError?.message);
-    return;
-  }
-
-  // Insert all updates for this event
-  const updateRows = updates.map((u) => ({
-    event_id: event.id,
-    content: u.content,
-    source_name: u.source_name,
-    source_url: u.source_url ?? null,
-  }));
-
-  const { error: updatesError } = await supabase.from('event_updates').insert(updateRows);
-
-  if (updatesError) {
-    console.error(`[ERROR] Failed to insert updates for "${title}":`, updatesError.message);
-    return;
-  }
-
-  console.log(`[OK] Ingested "${title}" (${updates.length} update(s)) — id: ${event.id}`);
+  console.log(`[OK] Ingested "${title}" (${updates.length} update(s)) — id: ${eventId}`);
 }
 
 // ── Seed data (Steps 8 + 9): 15 realistic events ──────────────

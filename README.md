@@ -460,19 +460,28 @@ supabase/migrations/005_deny_event_updates_insert.sql
 supabase/migrations/006_signals_trust_score_trigger.sql
 supabase/migrations/007_signal_integrity.sql
 supabase/migrations/008_source_count_trigger_hardening.sql
+supabase/migrations/009_backend_hardening.sql
+supabase/migrations/010_explicit_anon_deny.sql
+supabase/migrations/011_atomic_ingest_function.sql
 ```
 
-**4. Enable Realtime** in Supabase Dashboard → Database → Replication:
+**4a. Verify schema** (optional — confirms all migrations applied correctly)
+```sql
+-- Run supabase/scripts/verify_db.sql in the SQL Editor.
+-- All rows should show 'PASS'.
+```
+
+**5. Enable Realtime** in Supabase Dashboard → Database → Replication:
 - Enable for `events` table
 - Enable for `event_updates` table
 
-**5. Seed data (optional)**
+**6. Seed data (optional)**
 ```bash
 # Add SUPABASE_SERVICE_KEY to .env first
 npx tsx supabase/seed/ingest.ts
 ```
 
-**6. Start the app**
+**7. Start the app**
 ```bash
 npx expo start
 ```
@@ -503,9 +512,18 @@ npx expo start
   - Sign Out button accessible from both EventList and EventDetail headers
 - Error boundary wrapping the full navigation stack (crash recovery screen)
 - `formatRelativeTime` helper: "just now" / "5m ago" / "3h ago" / "2d ago"
-- Ingestion script (`npx tsx supabase/seed/ingest.ts`) with duplicate guard (15 seed events)
+- Ingestion script (`npx tsx supabase/seed/ingest.ts`) with atomic ingestion via DB function (migration 011): advisory-lock duplicate guard prevents TOCTOU races; event + updates inserted in one transaction (no orphaned events on partial failure)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
-- Security: explicit RESTRICTIVE deny policies (migrations 004, 005, 007) on events, event_updates, users, and signals DELETE; `signals_update_own` WITH CHECK prevents post-update field reassignment (migration 007); trust score trigger is SECURITY DEFINER (migration 006); source_count trigger hardened to SECURITY DEFINER and dead function removed (migration 008)
+- Security:
+  - RESTRICTIVE deny policies on all write paths for `authenticated` (migrations 004, 005, 007): events INSERT/UPDATE/DELETE, event_updates INSERT/UPDATE/DELETE, users INSERT/UPDATE/DELETE, signals DELETE
+  - Explicit RESTRICTIVE deny for `anon` role on signals and users (migration 010): product rule machine-verifiable via pg_policies
+  - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007)
+  - BEFORE UPDATE trigger enforces signal field immutability: user_id, event_id, created_at cannot be changed after creation (migration 009)
+  - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations (migrations 006, 009)
+  - `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011)
+  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011)
+  - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL that checks all RLS, RESTRICTIVE policies, SECURITY DEFINER functions, triggers, and EXECUTE grants
 
 ### Not Implemented
 
