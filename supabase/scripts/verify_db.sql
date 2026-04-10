@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–015) to confirm expected state.
+-- Run after applying all migrations (001–016) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -98,7 +98,8 @@ WHERE n.nspname = 'public'
     'handle_new_user',
     'ingest_event',
     'reconcile_source_counts',   -- migration 015
-    'reconcile_trust_scores'     -- migration 015
+    'reconcile_trust_scores',    -- migration 015
+    'compute_trust_score'        -- migration 016
   )
 ORDER BY p.proname;
 
@@ -154,14 +155,17 @@ WHERE n.nspname = 'auth'
 
 -- ── Section 7: EXECUTE permissions on internal functions ─────────────────
 --
--- recalculate_trust_score and ingest_event must NOT be callable by
--- anon or authenticated; service_role must be able to call both.
+-- All internal functions must NOT be callable by anon or authenticated;
+-- service_role must be able to call all of them.
+-- compute_trust_score is a pure formula helper — still an internal
+-- implementation detail, not a public API endpoint.
 
 WITH checks AS (
-  SELECT 'recalculate_trust_score(uuid)' AS fn UNION ALL
-  SELECT 'ingest_event(text,text,jsonb)'  UNION ALL
-  SELECT 'reconcile_source_counts()'      UNION ALL
-  SELECT 'reconcile_trust_scores()'
+  SELECT 'recalculate_trust_score(uuid)'   AS fn UNION ALL
+  SELECT 'ingest_event(text,text,jsonb)'   UNION ALL
+  SELECT 'reconcile_source_counts()'       UNION ALL
+  SELECT 'reconcile_trust_scores()'        UNION ALL
+  SELECT 'compute_trust_score(integer,integer)'  -- migration 016
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -369,5 +373,5 @@ WHERE schemaname = 'public'
   AND indexname  = 'idx_events_dedup';
 
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–015 are applied.
+-- All rows should show 'PASS' after migrations 001–016 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.

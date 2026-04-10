@@ -535,16 +535,17 @@ npx expo start
 - Ingestion script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC (migrations 011–014): advisory-lock case-insensitive duplicate guard (TOCTOU-safe); event + updates in one transaction (no orphaned rows); input validation rejects empty title, empty updates array, missing update fields, invalid status; functional index on `lower(title)` supports O(log n) dedup query
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
 - Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER
+- Unified trust score formula (migration 016): `compute_trust_score(confirms, disputes)` is the single authoritative scoring function (IMMUTABLE SQL); both `recalculate_trust_score` and `reconcile_trust_scores` delegate to it — formula lives in one place, drift between trigger path and reconciliation tool is structurally impossible
 - Security:
   - RESTRICTIVE deny policies on all write paths for `authenticated` (migrations 004, 005, 007): events INSERT/UPDATE/DELETE, event_updates INSERT/UPDATE/DELETE, users INSERT/UPDATE/DELETE, signals DELETE
   - Explicit RESTRICTIVE deny for `anon` role on signals and users (migration 010): product rule machine-verifiable via pg_policies
   - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007)
   - BEFORE UPDATE trigger enforces signal field immutability: user_id, event_id, created_at cannot be changed after creation (migration 009)
   - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations; fires on INSERT OR UPDATE OR DELETE — covers user account cascade-delete path (migrations 006, 009, 013)
-  - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–015)
-  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–015)
+  - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores`, `compute_trust_score` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–016)
+  - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–016)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, and functional indexes (001–015)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, and functional indexes (001–016)
 
 ### Not Implemented
 
