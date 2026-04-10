@@ -10,22 +10,31 @@
  * Options:
  *   --adapter=<name>   Adapter to use. Default: sample
  *                      Available: sample, fixture
+ *   --fixture=<path>   Path to a JSON fixture file. Implies --adapter=fixture.
+ *                      Relative paths are resolved from the current working directory.
+ *                      Default (when --adapter=fixture): fixtures/example.json
  *   --dry-run          Normalize items and log what would be ingested.
  *                      Does NOT write to Supabase. Safe to run anytime.
  *   --limit=N          Process only the first N items from the adapter.
  *                      Useful for testing a new adapter with a small batch.
  *
  * Examples:
- *   # Dry run — see what would be ingested, no DB writes
+ *   # Dry run with default sample events — no DB writes
  *   npx tsx supabase/ingestion/run.ts --dry-run
  *
- *   # Ingest first 3 events using the sample adapter
+ *   # Dry run against the built-in example fixture
+ *   npx tsx supabase/ingestion/run.ts --adapter=fixture --dry-run
+ *
+ *   # Dry run against a custom fixture file
+ *   npx tsx supabase/ingestion/run.ts --fixture=./my_events.json --dry-run
+ *
+ *   # Ingest first 3 sample events
  *   npx tsx supabase/ingestion/run.ts --adapter=sample --limit=3
  *
- *   # Full sample ingestion (15 events)
- *   npx tsx supabase/ingestion/run.ts --adapter=sample
+ *   # Full live ingest from a custom fixture file
+ *   npx tsx supabase/ingestion/run.ts --fixture=/path/to/events.json
  *
- * Requires in .env:
+ * Requires in .env (not needed for --dry-run):
  *   EXPO_PUBLIC_SUPABASE_URL
  *   SUPABASE_SERVICE_KEY   ← service_role key (bypasses RLS, authorized for ingest_event)
  *
@@ -41,30 +50,58 @@ import { SampleAdapter } from './adapters/sample';
 import { FixtureAdapter } from './adapters/fixture';
 import type { SourceAdapter, IngestionResult } from './types';
 
-// ── Adapter registry ────────────────────────────────────────────────────────
+// ── Adapter factory ─────────────────────────────────────────────────────────
 //
-// Add new adapters here as they are implemented.
-// Key = value used in --adapter=<key> CLI argument.
+// Creates the adapter for a given name. Called after CLI args are parsed so
+// options like fixturePath can be forwarded to the constructor.
 //
-// fixture: reads RawSourceItem[] from fixtures/example.json (or FIXTURE_PATH env var)
-// sample:  hardcoded mock events for dev/testing (15 realistic events)
+// Adding a new adapter:
+//   1. Create adapters/<name>.ts implementing SourceAdapter
+//   2. Add a case here
+//   3. Add the name to KNOWN_ADAPTERS for the error message
 
-const ADAPTERS: Record<string, SourceAdapter> = {
-  sample:  new SampleAdapter(),
-  fixture: new FixtureAdapter(),
-};
+const KNOWN_ADAPTERS = ['sample', 'fixture'] as const;
+
+function makeAdapter(
+  name: string,
+  opts: { fixturePath?: string },
+): SourceAdapter {
+  switch (name) {
+    case 'sample':
+      return new SampleAdapter();
+    case 'fixture':
+      return new FixtureAdapter(opts.fixturePath);
+    default: {
+      console.error(
+        `[run] Unknown adapter "${name}". Available: ${KNOWN_ADAPTERS.join(', ')}`,
+      );
+      process.exit(1);
+    }
+  }
+}
 
 // ── CLI arg parsing ─────────────────────────────────────────────────────────
 
-function parseArgs(): { adapterName: string; dryRun: boolean; limit?: number } {
+interface ParsedArgs {
+  adapterName: string;
+  fixturePath?: string;
+  dryRun: boolean;
+  limit?: number;
+}
+
+function parseArgs(): ParsedArgs {
   const args = process.argv.slice(2);
   let adapterName = 'sample';
+  let fixturePath: string | undefined;
   let dryRun = false;
   let limit: number | undefined;
 
   for (const arg of args) {
     if (arg.startsWith('--adapter=')) {
       adapterName = arg.slice('--adapter='.length);
+    } else if (arg.startsWith('--fixture=')) {
+      fixturePath = arg.slice('--fixture='.length);
+      adapterName = 'fixture'; // --fixture implies --adapter=fixture
     } else if (arg === '--dry-run') {
       dryRun = true;
     } else if (arg.startsWith('--limit=')) {
@@ -73,22 +110,15 @@ function parseArgs(): { adapterName: string; dryRun: boolean; limit?: number } {
     }
   }
 
-  return { adapterName, dryRun, limit };
+  return { adapterName, fixturePath, dryRun, limit };
 }
 
 // ── Runner ──────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { adapterName, dryRun, limit } = parseArgs();
+  const { adapterName, fixturePath, dryRun, limit } = parseArgs();
 
-  const adapter = ADAPTERS[adapterName];
-  if (!adapter) {
-    const available = Object.keys(ADAPTERS).join(', ');
-    console.error(
-      `[run] Unknown adapter "${adapterName}". Available: ${available}`,
-    );
-    process.exit(1);
-  }
+  const adapter = makeAdapter(adapterName, { fixturePath });
 
   // Only create the DB client when actually writing.
   const client = dryRun ? null : createIngestionClient();

@@ -225,7 +225,8 @@ supabase/
 │   ├── client.ts                  # createIngestionClient() — service_role Supabase client
 │   ├── normalize.ts               # normalizeSourceItem(): RawSourceItem → NormalizedEvent
 │   ├── ingest.ts                  # ingestEvent(): write gate (calls ingest_event RPC only)
-│   ├── run.ts                     # CLI runner: --adapter=<name> [--dry-run] [--limit=N]
+│   ├── run.ts                     # CLI runner: --adapter=<name> [--fixture=<path>] [--dry-run] [--limit=N]
+│   ├── test_normalize.ts          # Normalization test runner (32 cases, no framework needed)
 │   ├── adapters/
 │   │   ├── sample.ts              # SampleAdapter — 15 mock events for dev/testing
 │   │   └── fixture.ts             # FixtureAdapter — reads RawSourceItem[] from a JSON file
@@ -512,19 +513,24 @@ supabase/migrations/016_compute_trust_score_formula.sql
 ```bash
 # Add SUPABASE_SERVICE_KEY to .env first (service_role key from Supabase dashboard)
 
-# Option A — Dry run (sample adapter, no DB writes)
+# Test normalization layer (no DB connection needed)
+npx tsx supabase/ingestion/test_normalize.ts
+
+# Dry run — see what would be ingested (no DB writes)
 npx tsx supabase/ingestion/run.ts --dry-run
 
-# Option B — Dry run from fixture file (edit fixtures/example.json first)
+# Dry run against a custom fixture file
+npx tsx supabase/ingestion/run.ts --fixture=./my_events.json --dry-run
+
+# Dry run against the built-in example fixture
 npx tsx supabase/ingestion/run.ts --adapter=fixture --dry-run
 
-# Option C — Ingest sample events (15 realistic mock events)
+# Live ingest (requires SUPABASE_SERVICE_KEY in .env)
 npx tsx supabase/ingestion/run.ts --adapter=sample
+npx tsx supabase/ingestion/run.ts --fixture=./my_events.json
+npx tsx supabase/ingestion/run.ts --adapter=sample --limit=3   # first 3 only
 
-# Option D — Ingest from fixture file
-npx tsx supabase/ingestion/run.ts --adapter=fixture
-
-# Option E — Quick seed shorthand (same events, bypasses adapter/normalize layers)
+# Quick seed shorthand (bypasses adapter/normalize layers)
 npx tsx supabase/seed/ingest.ts
 ```
 
@@ -563,10 +569,11 @@ npx expo start
   - `types.ts`: `RawSourceItem` (adapter output) → `NormalizedEvent` (IRIS DB shape); `SourceAdapter` interface; `IngestionResult`
   - `normalize.ts`: `normalizeSourceItem()` — validates headline/status/content/source_name, trims whitespace, assembles updates array; throws `NormalizationError` on bad input
   - `ingest.ts`: `ingestEvent()` — write gate, calls `ingest_event` RPC, returns `ok` / `skipped` / `error`
-  - `run.ts`: CLI runner `npx tsx supabase/ingestion/run.ts [--adapter=sample] [--dry-run] [--limit=N]`
+  - `run.ts`: CLI runner `npx tsx supabase/ingestion/run.ts [--adapter=<name>] [--fixture=<path>] [--dry-run] [--limit=N]`; `--fixture=<path>` implies `--adapter=fixture`
+  - `test_normalize.ts`: 32-case normalization test suite (no framework); `npx tsx supabase/ingestion/test_normalize.ts`; covers all good/bad input combinations
   - `adapters/sample.ts`: `SampleAdapter` — 15 mock events in `RawSourceItem` shape
-  - `adapters/fixture.ts`: `FixtureAdapter` — reads `RawSourceItem[]` from `fixtures/example.json` (or `FIXTURE_PATH` env var); use for testing normalization against arbitrary real-world data without writing code
-  - `fixtures/example.json`: 3-item example showing full `RawSourceItem` shape (all fields including optional ones)
+  - `adapters/fixture.ts`: `FixtureAdapter` — reads `RawSourceItem[]` from a JSON file; default `fixtures/example.json`, overridden by `--fixture=<path>` or `FIXTURE_PATH` env var
+  - `fixtures/example.json`: 3-item example showing full `RawSourceItem` shape (all optional fields)
 - Quick seed script (`npx tsx supabase/seed/ingest.ts`) calls `ingest_event` RPC directly (bypasses adapter/normalize layers)
 - Production hardening: sanitized errors, realtime payload type guards, realtime dedup, signal no-op guard, isMounted guard, SecureStore chunk write-order fix
 - Admin reconciliation functions (migration 015): `reconcile_source_counts()` and `reconcile_trust_scores()` repair denormalized counters after any out-of-band data operations; service_role only, SECURITY DEFINER

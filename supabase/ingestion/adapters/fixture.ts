@@ -45,7 +45,7 @@ export class FixtureAdapter implements SourceAdapter {
     if (!fs.existsSync(resolved)) {
       throw new Error(
         `FixtureAdapter: file not found: ${resolved}\n` +
-        `Set FIXTURE_PATH env var or create supabase/ingestion/fixtures/example.json`,
+        `Use --fixture=<path> or set FIXTURE_PATH env var, or create fixtures/example.json`,
       );
     }
 
