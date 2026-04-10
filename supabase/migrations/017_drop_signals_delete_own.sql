@@ -1,0 +1,36 @@
+-- 017_drop_signals_delete_own.sql
+--
+-- Drops the dead permissive DELETE policy on signals created in migration 001.
+--
+-- HISTORY:
+--   Migration 001 created "signals_delete_own":
+--     CREATE POLICY "signals_delete_own" ON signals FOR DELETE TO authenticated
+--       USING (auth.uid() = user_id);
+--
+--   Migration 007 added "deny_signals_delete":
+--     CREATE POLICY "deny_signals_delete" ON signals
+--       AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+--
+--   A RESTRICTIVE policy is ANDed with all permissive policies. From the moment
+--   migration 007 was applied, deny_signals_delete blocks ALL authenticated
+--   DELETE attempts on signals, regardless of signals_delete_own. The permissive
+--   policy has been inert ever since.
+--
+-- WHY DROP IT NOW:
+--   A dead permissive DELETE policy left in pg_policies creates ambiguity.
+--   An operator or auditor reviewing pg_policies sees both policies and must
+--   reason through Postgres RESTRICTIVE semantics to conclude that deletes are
+--   blocked. The policy name "signals_delete_own" implies users CAN delete —
+--   a direct contradiction of the product rule.
+--
+--   Dropping it makes the intent unambiguous: pg_policies shows only the
+--   RESTRICTIVE deny. No permissive DELETE path exists or ever will.
+--
+-- IMPACT: none. The RESTRICTIVE deny already blocks all deletes.
+--   This is a schema clarity fix, not a behavior change.
+--
+-- NOTE: migration 007 deliberately chose not to drop signals_delete_own at the
+--   time to keep the migration focused on the two gaps it was fixing. This
+--   migration closes that gap explicitly.
+
+DROP POLICY IF EXISTS "signals_delete_own" ON public.signals;

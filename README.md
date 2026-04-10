@@ -219,7 +219,8 @@ supabase/
 │   ├── 013_trust_score_on_signal_delete.sql
 │   ├── 014_case_insensitive_dedup.sql
 │   ├── 015_reconciliation_functions.sql
-│   └── 016_compute_trust_score_formula.sql
+│   ├── 016_compute_trust_score_formula.sql
+│   └── 017_drop_signals_delete_own.sql
 ├── ingestion/                     # V1 ingestion pipeline (adapter → normalize → write)
 │   ├── types.ts                   # RawSourceItem, NormalizedEvent, SourceAdapter, IngestionResult
 │   ├── client.ts                  # createIngestionClient() — service_role Supabase client
@@ -497,6 +498,7 @@ supabase/migrations/013_trust_score_on_signal_delete.sql
 supabase/migrations/014_case_insensitive_dedup.sql
 supabase/migrations/015_reconciliation_functions.sql
 supabase/migrations/016_compute_trust_score_formula.sql
+supabase/migrations/017_drop_signals_delete_own.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -581,13 +583,14 @@ npx expo start
 - Security:
   - RESTRICTIVE deny policies on all write paths for `authenticated` (migrations 004, 005, 007): events INSERT/UPDATE/DELETE, event_updates INSERT/UPDATE/DELETE, users INSERT/UPDATE/DELETE, signals DELETE
   - Explicit RESTRICTIVE deny for `anon` role on signals and users (migration 010): product rule machine-verifiable via pg_policies
-  - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007)
+  - `signals_update_own` WITH CHECK prevents post-update user_id/event_id reassignment (migration 007); `signals_insert_own` WITH CHECK prevents inserting signals for other users (migration 001)
+  - Dead permissive DELETE policy `signals_delete_own` dropped (migration 017): pg_policies now unambiguously shows only the RESTRICTIVE deny for signal deletes
   - BEFORE UPDATE trigger enforces signal field immutability: user_id, event_id, created_at cannot be changed after creation (migration 009)
   - Trust score trigger is SECURITY DEFINER + SET search_path=public; SELECT FOR UPDATE serializes concurrent recomputations; fires on INSERT OR UPDATE OR DELETE — covers user account cascade-delete path (migrations 006, 009, 013)
   - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores`, `compute_trust_score` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–016)
   - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–016)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, and functional indexes (001–016)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, and signal permissive policy ownership (001–017)
 
 ### Not Implemented
 

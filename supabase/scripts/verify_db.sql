@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–016) to confirm expected state.
+-- Run after applying all migrations (001–017) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -372,6 +372,73 @@ WHERE schemaname = 'public'
   AND tablename  = 'events'
   AND indexname  = 'idx_events_dedup';
 
+-- ── Section 15: Signal permissive policy ownership correctness ───────────
+--
+-- Confirms the permissive policies that grant signal access to `authenticated`
+-- users have the correct ownership expressions. These are not RESTRICTIVE
+-- policies (those are in Sections 3 + 11), but their expressions are critical:
+--
+--   signals_insert_own: WITH CHECK must contain user_id — ensures a user can
+--     only insert a signal where user_id = their own uid. Without this an
+--     authenticated user could insert signals for other users.
+--
+--   signals_update_own: USING + WITH CHECK must both contain user_id — USING
+--     restricts which rows they can update (own rows only); WITH CHECK ensures
+--     the result row still belongs to them (prevents user_id reassignment).
+--     Migration 007 fixed the missing WITH CHECK; this section verifies it.
+--
+--   signals_read_own: USING must contain user_id — restricts SELECT to own
+--     signal rows. Without this all signals would be publicly readable.
+--
+--   signals_delete_own: must NOT exist — this permissive DELETE policy was
+--     created in migration 001 and dropped in migration 017. Its presence after
+--     migration 017 indicates the migration was not applied. While deny_signals_delete
+--     RESTRICTIVE would still block deletes, the dead policy is a clarity hazard.
+
+-- ── Part A: Ownership expression check on permissive signal policies ───────
+
+WITH expected_signal_policies AS (
+  SELECT * FROM (VALUES
+    ('signals_insert_own', 'INSERT', NULL::text,                 'auth.uid() = user_id'),
+    ('signals_update_own', 'UPDATE', 'auth.uid() = user_id',     'auth.uid() = user_id'),
+    ('signals_read_own',   'SELECT', 'auth.uid() = user_id',     NULL::text)
+  ) AS t(polname, cmd, required_qual_fragment, required_check_fragment)
+)
+SELECT
+  e.polname   AS "policy",
+  e.cmd,
+  p.qual       AS "using_expr",
+  p.with_check AS "with_check_expr",
+  CASE
+    WHEN p.policyname IS NULL
+      THEN 'FAIL ← policy missing'
+    WHEN e.required_qual_fragment IS NOT NULL
+      AND (p.qual IS NULL OR p.qual NOT LIKE '%user_id%')
+      THEN 'FAIL ← USING clause missing or lacks user_id ownership check'
+    WHEN e.required_check_fragment IS NOT NULL
+      AND (p.with_check IS NULL OR p.with_check NOT LIKE '%user_id%')
+      THEN 'FAIL ← WITH CHECK clause missing or lacks user_id ownership check'
+    ELSE 'PASS'
+  END AS status
+FROM expected_signal_policies e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = 'signals'
+  AND p.policyname = e.polname
+ORDER BY e.polname;
+
+-- ── Part B: signals_delete_own must not exist (dropped in migration 017) ───
+
+SELECT
+  CASE WHEN count(*) = 0
+    THEN 'PASS — signals_delete_own does not exist'
+    ELSE 'FAIL ← dead permissive DELETE policy signals_delete_own still exists (apply migration 017)'
+  END AS "signals_delete_own_dropped"
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'signals'
+  AND policyname = 'signals_delete_own';
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–016 are applied.
+-- All rows should show 'PASS' after migrations 001–017 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
