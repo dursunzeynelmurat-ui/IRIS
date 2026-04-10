@@ -113,7 +113,7 @@ export function EventCard({
 
       {/* Status badge + trust score */}
       <View style={styles.cardMeta}>
-        <View style={[styles.badge, { borderColor: statusColor }]}>
+        <View style={[styles.badge, { borderColor: statusColor, backgroundColor: statusColor + '18' }]}>
           <Text style={[styles.badgeText, { color: statusColor }]}>
             {STATUS_LABEL[event.status] ?? event.status}
           </Text>

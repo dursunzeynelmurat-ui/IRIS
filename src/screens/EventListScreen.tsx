@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#3a3a3c',
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 12,
+    padding: 14,
   },
   centeredFlex: {
     flexGrow: 1,
@@ -203,6 +203,7 @@ const styles = StyleSheet.create({
   },
   retryText: {
     fontSize: 14,
+    fontWeight: '600',
     color: '#f2f2f2',
   },
   emptyContainer: {

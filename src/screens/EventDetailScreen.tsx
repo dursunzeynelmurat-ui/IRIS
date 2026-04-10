@@ -224,7 +224,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
 
           {/* Status badge + source count */}
           <View style={styles.metaRow}>
-            <View style={[styles.badge, { borderColor: statusColor }]}>
+            <View style={[styles.badge, { borderColor: statusColor, backgroundColor: statusColor + '18' }]}>
               <Text style={[styles.badgeText, { color: statusColor }]}>
                 {STATUS_LABEL[event.status] ?? event.status}
               </Text>
@@ -468,6 +468,7 @@ const styles = StyleSheet.create({
   },
   retryText: {
     fontSize: 14,
+    fontWeight: '600',
     color: '#f2f2f2',
   },
   signOutBtn: {
