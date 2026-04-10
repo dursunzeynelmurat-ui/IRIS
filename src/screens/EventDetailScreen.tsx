@@ -15,32 +15,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { EventStatus, EventUpdate, SignalType } from '../types';
+import { STATUS_COLOR, STATUS_LABEL, scoreColor } from '../lib/eventUtils';
+import { EventUpdate, SignalType } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
-
-// ── Helpers ───────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<EventStatus, string> = {
-  emerging:   'Emerging',
-  developing: 'Developing',
-  verified:   'Verified',
-  disputed:   'Disputed',
-};
-
-const STATUS_COLOR: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
-  developing: '#0a84ff',
-  verified:   '#30d158',
-  disputed:   '#ff453a',
-};
-
-function scoreColor(score: number): string {
-  if (score >= 67) return '#30d158';
-  if (score >= 34) return '#ff9f0a';
-  return '#ff453a';
-}
 
 // ── Sub-components ────────────────────────────────────────────
 
@@ -269,7 +248,10 @@ export function EventDetailScreen({ route, navigation }: Props) {
         </View>
       }
       ListEmptyComponent={
-        <Text style={styles.emptyText}>No updates yet.</Text>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>No updates yet.</Text>
+          <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+        </View>
       }
     />
   );
@@ -445,10 +427,17 @@ const styles = StyleSheet.create({
   },
 
   // ── Empty / error ──
+  emptyContainer: {
+    paddingTop: 12,
+  },
   emptyText: {
     fontSize: 14,
     color: '#8e8e93',
-    paddingLeft: 22,
+    marginBottom: 4,
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: '#636366',
   },
   errorText: {
     fontSize: 16,

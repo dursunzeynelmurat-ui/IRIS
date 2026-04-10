@@ -7,30 +7,9 @@ import {
   View,
 } from 'react-native';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
+import { STATUS_COLOR, STATUS_LABEL, scoreColor } from '../lib/eventUtils';
 import { castSignal } from '../services/signalService';
-import { Event, EventStatus, SignalType } from '../types';
-
-// ── Helpers ───────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<EventStatus, string> = {
-  emerging:   'Emerging',
-  developing: 'Developing',
-  verified:   'Verified',
-  disputed:   'Disputed',
-};
-
-const STATUS_COLOR: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
-  developing: '#0a84ff',
-  verified:   '#30d158',
-  disputed:   '#ff453a',
-};
-
-function scoreColor(score: number): string {
-  if (score >= 67) return '#30d158';
-  if (score >= 34) return '#ff9f0a';
-  return '#ff453a';
-}
+import { Event, SignalType } from '../types';
 
 // ── Component ─────────────────────────────────────────────────
 

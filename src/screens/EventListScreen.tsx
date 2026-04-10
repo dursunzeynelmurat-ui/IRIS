@@ -13,6 +13,7 @@ import { EventCard } from '../components/EventCard';
 import { useAuth } from '../hooks/useAuth';
 import { useEvents } from '../hooks/useEvents';
 import { useUserSignals } from '../hooks/useUserSignals';
+import { STATUS_COLOR } from '../lib/eventUtils';
 import { supabase } from '../lib/supabase';
 import { EventStatus } from '../types';
 import type { RootStackParamList } from '../types/navigation';
@@ -28,13 +29,6 @@ const FILTERS: { key: FilterOption; label: string }[] = [
   { key: 'verified',   label: 'Verified' },
   { key: 'disputed',   label: 'Disputed' },
 ];
-
-const FILTER_COLOR: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
-  developing: '#0a84ff',
-  verified:   '#30d158',
-  disputed:   '#ff453a',
-};
 
 export function EventListScreen({ navigation }: Props) {
   const { events, loading, refreshing, error, refetch } = useEvents();
@@ -91,7 +85,7 @@ export function EventListScreen({ navigation }: Props) {
       >
         {FILTERS.map(({ key, label }) => {
           const isActive = activeFilter === key;
-          const accentColor = key === 'all' ? '#f2f2f2' : FILTER_COLOR[key as EventStatus];
+          const accentColor = key === 'all' ? '#f2f2f2' : STATUS_COLOR[key as EventStatus];
           return (
             <TouchableOpacity
               key={key}
@@ -132,9 +126,12 @@ export function EventListScreen({ navigation }: Props) {
         refreshing={!!refreshing}
         onRefresh={refetch}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            {activeFilter === 'all' ? 'No events yet.' : `No ${activeFilter} events.`}
-          </Text>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {activeFilter === 'all' ? 'No events yet.' : `No ${activeFilter} events.`}
+            </Text>
+            <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+          </View>
         }
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
@@ -166,7 +163,7 @@ const styles = StyleSheet.create({
   },
   filterChipText: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#8e8e93',
   },
   list: {
@@ -201,16 +198,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: '#3a3a3c',
     borderRadius: 8,
   },
   retryText: {
     fontSize: 14,
     color: '#f2f2f2',
   },
+  emptyContainer: {
+    alignItems: 'center',
+    gap: 6,
+  },
   emptyText: {
     fontSize: 15,
+    fontWeight: '600',
     color: '#8e8e93',
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: '#636366',
   },
   signOutBtn: {
     marginRight: 4,

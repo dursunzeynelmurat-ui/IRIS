@@ -70,11 +70,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: '#3a3a3c',
     borderRadius: 8,
   },
   buttonText: {
     fontSize: 15,
+    fontWeight: '600',
     color: '#f2f2f2',
   },
 });
