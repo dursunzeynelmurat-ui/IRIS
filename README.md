@@ -19,13 +19,14 @@ IRIS does not deliver news articles. Events are evolving entities with changing 
 9. [Data Fetching](#9-data-fetching)
 10. [Realtime System](#10-realtime-system)
 11. [Signal System](#11-signal-system)
-12. [UI Structure](#12-ui-structure)
-13. [Error Handling](#13-error-handling)
-14. [Performance Decisions](#14-performance-decisions)
-15. [Environment Config](#15-environment-config)
-16. [TypeScript](#16-typescript)
-17. [Setup](#17-setup)
-18. [Current System State](#18-current-system-state)
+12. [User Preferences](#12-user-preferences)
+13. [UI Structure](#13-ui-structure)
+14. [Error Handling](#14-error-handling)
+15. [Performance Decisions](#15-performance-decisions)
+16. [Environment Config](#16-environment-config)
+17. [TypeScript](#17-typescript)
+18. [Setup](#18-setup)
+19. [Current System State](#19-current-system-state)
 
 ---
 
@@ -42,7 +43,7 @@ IRIS performs the following functions:
 **IRIS does not include:**
 - Comments, replies, discussions, or reactions
 - User-created events or updates
-- Personalized feed or recommendation algorithm
+- Personalized feed or recommendation algorithm ("For You")
 - Editorial curation or moderation (MVP scope)
 - Source weighting
 
@@ -88,6 +89,15 @@ IRIS performs the following functions:
 
 **Constraint:** `UNIQUE(user_id, event_id)` — one signal per user per event.
 
+### `user_preferences`
+| Column | Type | Notes |
+|---|---|---|
+| user_id | UUID | PK + FK → `auth.users.id` ON DELETE CASCADE |
+| theme | TEXT | CHECK: `system`, `light`, `dark`; default `system` |
+| updated_at | TIMESTAMPTZ | Updated on each preference write |
+
+One row per user, auto-created on signup via the `handle_new_user` trigger. Stores UI preferences only — not used for feed personalization or content ranking.
+
 ---
 
 ## 3. Database Logic
@@ -123,12 +133,14 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
 | `event_updates` | Public | — (service role only via ingestion script) |
 | `signals` | Own rows only | INSERT + UPDATE own rows only (no DELETE — protected by RESTRICTIVE deny) |
 | `users` | Own row only | — (created by trigger on auth.users INSERT) |
+| `user_preferences` | Own row only | INSERT + UPDATE own row only (no DELETE — row persists until account deletion via CASCADE) |
 
 > **Security note:** RESTRICTIVE deny policies are ANDed with all permissive policies — no future accidental permissive policy can re-open a blocked path.
 > - Migrations 004 + 005: block `authenticated` from INSERT/UPDATE/DELETE on `events`, `event_updates`, and `users`; block `authenticated` INSERT on `event_updates`
 > - Migration 007: block `authenticated` DELETE on `signals`; add `WITH CHECK (auth.uid() = user_id)` to `signals_update_own` to prevent post-update ownership reassignment
 > - Migration 009: BEFORE UPDATE trigger enforces signal field immutability (user_id, event_id, created_at); `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC; all SECURITY DEFINER functions use `SET search_path = public`
 > - Migration 010: explicit `RESTRICTIVE FOR ALL TO anon USING (false)` on `signals` and `users` — the product rule "anonymous users do not enter the app" is now machine-verifiable via `pg_policies`
+> - Migration 018: `user_preferences` — `deny_prefs_anon` RESTRICTIVE (ALL TO anon) + `deny_prefs_delete` RESTRICTIVE (DELETE TO authenticated); permissive policies grant read/write to own row only
 > - The ingestion script uses the service-role key which bypasses RLS entirely and is unaffected by any of the above.
 
 ---
@@ -191,11 +203,12 @@ src/
 │   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
 │   └── supabase.ts          # Supabase client (env-var validated, chunked SecureStore)
 ├── hooks/
-│   ├── useAuth.ts           # Re-export from AuthContext (no subscription)
-│   ├── useEvents.ts         # Event list fetch + realtime (UPDATE + INSERT)
-│   ├── useEventDetail.ts    # Event + updates fetch + realtime
-│   ├── useUserSignal.ts     # Single-event signal fetch + upsert (EventDetailScreen)
-│   └── useUserSignals.ts    # Bulk signal fetch for all events (EventListScreen, one query)
+│   ├── useAuth.ts              # Re-export from AuthContext (no subscription)
+│   ├── useEvents.ts            # Event list fetch + realtime (UPDATE + INSERT)
+│   ├── useEventDetail.ts       # Event + updates fetch + realtime
+│   ├── useUserSignal.ts        # Single-event signal fetch + upsert (EventDetailScreen)
+│   ├── useUserSignals.ts       # Bulk signal fetch for all events (EventListScreen, one query)
+│   └── useUserPreferences.ts   # Fetch + upsert user_preferences row (theme)
 ├── screens/
 │   ├── SignInScreen.tsx
 │   ├── EventListScreen.tsx
@@ -203,7 +216,7 @@ src/
 ├── services/
 │   └── signalService.ts     # castSignal(userId, eventId, type) — upsert only (trigger handles score)
 └── types/
-    ├── index.ts             # DB types: Event, EventUpdate, Signal, User
+    ├── index.ts             # DB types: Event, EventUpdate, Signal, User, UserPreferences, ThemePreference
     └── navigation.ts        # RootStackParamList
 
 supabase/
@@ -224,7 +237,8 @@ supabase/
 │   ├── 014_case_insensitive_dedup.sql
 │   ├── 015_reconciliation_functions.sql
 │   ├── 016_compute_trust_score_formula.sql
-│   └── 017_drop_signals_delete_own.sql
+│   ├── 017_drop_signals_delete_own.sql
+│   └── 018_user_preferences.sql
 ├── ingestion/                     # V1 ingestion pipeline (adapter → normalize → write)
 │   ├── types.ts                   # RawSourceItem, NormalizedEvent, SourceAdapter, IngestionResult
 │   ├── client.ts                  # createIngestionClient() — service_role Supabase client
@@ -390,7 +404,46 @@ Used only by `EventDetailScreen` (single-event context).
 
 ---
 
-## 12. UI Structure
+## 12. User Preferences
+
+### `useUserPreferences(userId)`
+
+Reads and writes the current user's `user_preferences` row.
+
+- **Fetch:** single `.maybeSingle()` query on mount; `loading` true until resolved
+- **Update:** `updateTheme(theme)` — optimistic update, then upserts `{ user_id, theme, updated_at }` with `onConflict: 'user_id'`; on failure, re-fetches DB state to revert to ground truth
+- **Unauthenticated:** returns `preferences: null`, `updateTheme` is a no-op
+- **Auto-row:** every authenticated user has a preferences row created by `handle_new_user` on signup (default `theme: 'system'`); the insert policy allows a bootstrap upsert for accounts that predate migration 018
+
+**Frontend contract (read/write):**
+```ts
+// Read current theme
+const { preferences } = useUserPreferences(userId);
+const theme = preferences?.theme ?? 'system';
+
+// Write theme change
+await updateTheme('dark');
+```
+
+**No RPC needed.** Direct `supabase.from('user_preferences')` access is safe because RLS restricts reads and writes to the authenticated user's own row.
+
+### Feed Support Boundaries
+
+`user_preferences` stores UI state only. The following are explicitly **not** implemented and are **not** planned as extensions of this table:
+
+| Feature | Status |
+|---|---|
+| "For You" feed | Not implemented — no infrastructure added |
+| Content personalization | Not implemented — feed order is not preference-driven |
+| Recommendation algorithm | Not implemented |
+| Behavioral tracking | Not implemented |
+| Source preference / weighting | Not implemented |
+
+Any future feed personalization feature would require a separate design decision and a new migration. The `user_preferences` table will not be repurposed for that.
+
+---
+
+## 13. UI Structure
 
 ### Event List Screen
 
@@ -431,7 +484,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 13. Error Handling
+## 14. Error Handling
 
 - Raw DB / Supabase error messages are never shown to users
 - User-facing messages: `"Unable to load events"`, `"Unable to load event"`, `"Could not save signal. Please try again."`
@@ -440,7 +493,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 14. Performance Decisions
+## 15. Performance Decisions
 
 - No refetch after signal submission — realtime is the sync mechanism
 - `Promise.all` for parallel event + updates fetch
@@ -451,7 +504,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 15. Environment Config
+## 16. Environment Config
 
 ### Client (mobile app)
 ```
@@ -471,7 +524,7 @@ Supabase Dashboard → Project Settings → API
 
 ---
 
-## 16. TypeScript
+## 17. TypeScript
 
 - `strict: true` enabled in `tsconfig.json`
 - `noUncheckedIndexedAccess` not enabled
@@ -480,7 +533,7 @@ Supabase Dashboard → Project Settings → API
 
 ---
 
-## 17. Setup
+## 18. Setup
 
 **1. Install dependencies**
 ```bash
@@ -512,6 +565,7 @@ supabase/migrations/014_case_insensitive_dedup.sql
 supabase/migrations/015_reconciliation_functions.sql
 supabase/migrations/016_compute_trust_score_formula.sql
 supabase/migrations/017_drop_signals_delete_own.sql
+supabase/migrations/018_user_preferences.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -556,7 +610,7 @@ npx expo start
 
 ---
 
-## 18. Current System State
+## 19. Current System State
 
 ### Implemented
 
@@ -607,11 +661,13 @@ npx expo start
   - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores`, `compute_trust_score` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–016)
   - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–016)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, and signal permissive policy ownership (001–017)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, signal permissive policy ownership, and user_preferences table integrity (001–018)
+- User preferences backend (migration 018): `user_preferences` table — theme preference (`system` | `light` | `dark`), auto-created on signup via `handle_new_user` trigger, RLS own-row read/update, RESTRICTIVE anon deny + RESTRICTIVE delete deny; `useUserPreferences(userId)` hook — fetch + optimistic upsert + revert on failure
 
 ### Not Implemented
 
 - Session persistence across restarts (disabled for Expo Go; re-enable SecureStoreAdapter + `persistSession: true` in `supabase.ts` for production EAS builds)
+- Theme preference applied to the UI — `user_preferences.theme` is stored and readable via `useUserPreferences`, but the UI does not yet consume it (no `ThemeProvider` wired up)
 - Offline / no-connection indicator
 - Push notifications
 - Rate limiting / abuse protection
@@ -619,3 +675,4 @@ npx expo start
 - Reputation or source weighting
 - Automated moderation
 - Analytics
+- "For You" feed / personalized content ranking — explicitly deferred; `user_preferences` table is not designed to support this and will not be extended for it without a separate design decision

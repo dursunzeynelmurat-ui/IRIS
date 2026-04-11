@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–017) to confirm expected state.
+-- Run after applying all migrations (001–018) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -16,7 +16,7 @@ SELECT
 FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relkind = 'r'
-  AND relname IN ('events', 'event_updates', 'signals', 'users')
+  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
 ORDER BY relname;
 
 -- ── Section 2: All policies on core tables (informational) ────────────────
@@ -31,7 +31,7 @@ SELECT
   with_check
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('events', 'event_updates', 'signals', 'users')
+  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
 ORDER BY tablename, policyname;
 
 -- ── Section 3: RESTRICTIVE deny policies — all 12 required ───────────────
@@ -42,21 +42,24 @@ ORDER BY tablename, policyname;
 WITH expected_restrictive AS (
   SELECT * FROM (VALUES
     -- migration 004
-    ('events',        'deny_events_insert'),
-    ('events',        'deny_events_update'),
-    ('events',        'deny_events_delete'),
-    ('event_updates', 'deny_event_updates_update'),
-    ('event_updates', 'deny_event_updates_delete'),
-    ('users',         'deny_users_insert'),
-    ('users',         'deny_users_update'),
-    ('users',         'deny_users_delete'),
+    ('events',            'deny_events_insert'),
+    ('events',            'deny_events_update'),
+    ('events',            'deny_events_delete'),
+    ('event_updates',     'deny_event_updates_update'),
+    ('event_updates',     'deny_event_updates_delete'),
+    ('users',             'deny_users_insert'),
+    ('users',             'deny_users_update'),
+    ('users',             'deny_users_delete'),
     -- migration 005
-    ('event_updates', 'deny_event_updates_insert'),
+    ('event_updates',     'deny_event_updates_insert'),
     -- migration 007
-    ('signals',       'deny_signals_delete'),
+    ('signals',           'deny_signals_delete'),
     -- migration 010
-    ('signals',       'deny_signals_anon'),
-    ('users',         'deny_users_anon')
+    ('signals',           'deny_signals_anon'),
+    ('users',             'deny_users_anon'),
+    -- migration 018
+    ('user_preferences',  'deny_prefs_anon'),
+    ('user_preferences',  'deny_prefs_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -236,18 +239,20 @@ WHERE conrelid = 'public.signals'::regclass
 
 WITH deny_policies AS (
   SELECT * FROM (VALUES
-    ('events',        'deny_events_insert'),
-    ('events',        'deny_events_update'),
-    ('events',        'deny_events_delete'),
-    ('event_updates', 'deny_event_updates_update'),
-    ('event_updates', 'deny_event_updates_delete'),
-    ('event_updates', 'deny_event_updates_insert'),
-    ('users',         'deny_users_insert'),
-    ('users',         'deny_users_update'),
-    ('users',         'deny_users_delete'),
-    ('signals',       'deny_signals_delete'),
-    ('signals',       'deny_signals_anon'),
-    ('users',         'deny_users_anon')
+    ('events',            'deny_events_insert'),
+    ('events',            'deny_events_update'),
+    ('events',            'deny_events_delete'),
+    ('event_updates',     'deny_event_updates_update'),
+    ('event_updates',     'deny_event_updates_delete'),
+    ('event_updates',     'deny_event_updates_insert'),
+    ('users',             'deny_users_insert'),
+    ('users',             'deny_users_update'),
+    ('users',             'deny_users_delete'),
+    ('signals',           'deny_signals_delete'),
+    ('signals',           'deny_signals_anon'),
+    ('users',             'deny_users_anon'),
+    ('user_preferences',  'deny_prefs_anon'),
+    ('user_preferences',  'deny_prefs_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -286,9 +291,10 @@ ORDER BY d.tbl, d.pol;
 
 WITH expected_checks AS (
   SELECT * FROM (VALUES
-    ('signals', 'signals_type_check',       'signals.type IN (confirm, dispute)'),
-    ('events',  'events_status_check',      'events.status IN (emerging, developing, verified, disputed)'),
-    ('events',  'events_trust_score_check', 'events.trust_score BETWEEN 0 AND 100')
+    ('signals',          'signals_type_check',              'signals.type IN (confirm, dispute)'),
+    ('events',           'events_status_check',             'events.status IN (emerging, developing, verified, disputed)'),
+    ('events',           'events_trust_score_check',        'events.trust_score BETWEEN 0 AND 100'),
+    ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)')
   ) AS t(tbl, expected_name, description)
 )
 SELECT
@@ -313,6 +319,9 @@ LEFT JOIN pg_constraint c
     OR
     -- events.trust_score check
     (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%trust_score%')
+    OR
+    -- user_preferences.theme check
+    (e.tbl = 'user_preferences' AND pg_get_constraintdef(c.oid) LIKE '%system%' AND pg_get_constraintdef(c.oid) LIKE '%light%')
   )
 ORDER BY e.tbl, e.description;
 
@@ -439,6 +448,95 @@ WHERE schemaname = 'public'
   AND tablename  = 'signals'
   AND policyname = 'signals_delete_own';
 
+-- ── Section 16: user_preferences table (migration 018) ───────────────────
+--
+-- Verifies the user_preferences table introduced in migration 018.
+-- Covers: permissive policy ownership expressions, default value, and
+-- CASCADE delete linkage.
+--
+-- RLS enablement   → Section 1
+-- RESTRICTIVE deny → Sections 3 + 11 (deny_prefs_anon, deny_prefs_delete)
+-- CHECK constraint → Section 12 (user_preferences_theme_check)
+
+-- ── Part A: Permissive policy ownership expressions ───────────────────────
+--
+-- prefs_read_own:   USING must contain user_id
+-- prefs_insert_own: WITH CHECK must contain user_id
+-- prefs_update_own: USING + WITH CHECK must both contain user_id
+
+WITH expected_prefs_policies AS (
+  SELECT * FROM (VALUES
+    ('prefs_read_own',   'SELECT', 'auth.uid() = user_id', NULL::text),
+    ('prefs_insert_own', 'INSERT', NULL::text,             'auth.uid() = user_id'),
+    ('prefs_update_own', 'UPDATE', 'auth.uid() = user_id', 'auth.uid() = user_id')
+  ) AS t(polname, cmd, required_qual_fragment, required_check_fragment)
+)
+SELECT
+  e.polname   AS "policy",
+  e.cmd,
+  p.qual       AS "using_expr",
+  p.with_check AS "with_check_expr",
+  CASE
+    WHEN p.policyname IS NULL
+      THEN 'FAIL ← policy missing (apply migration 018)'
+    WHEN e.required_qual_fragment IS NOT NULL
+      AND (p.qual IS NULL OR p.qual NOT LIKE '%user_id%')
+      THEN 'FAIL ← USING clause missing or lacks user_id ownership check'
+    WHEN e.required_check_fragment IS NOT NULL
+      AND (p.with_check IS NULL OR p.with_check NOT LIKE '%user_id%')
+      THEN 'FAIL ← WITH CHECK clause missing or lacks user_id ownership check'
+    ELSE 'PASS'
+  END AS status
+FROM expected_prefs_policies e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = 'user_preferences'
+  AND p.policyname = e.polname
+ORDER BY e.polname;
+
+-- ── Part B: Default theme value ───────────────────────────────────────────
+--
+-- user_preferences.theme must default to 'system'. If the default is wrong,
+-- new user rows will have an unexpected theme value.
+
+SELECT
+  column_name,
+  column_default,
+  CASE
+    WHEN column_default = '''system''::text' THEN 'PASS'
+    WHEN column_default IS NULL              THEN 'FAIL ← theme column has no default'
+    ELSE                                          'FAIL ← default is ' || column_default || ', expected ''system'''
+  END AS status
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'user_preferences'
+  AND column_name  = 'theme';
+
+-- ── Part C: CASCADE delete linkage ────────────────────────────────────────
+--
+-- user_preferences.user_id must reference auth.users(id) ON DELETE CASCADE.
+-- If CASCADE is missing, deleting an auth user will fail or leave orphan rows.
+
+SELECT
+  tc.constraint_name,
+  rc.delete_rule,
+  CASE
+    WHEN rc.delete_rule = 'CASCADE' THEN 'PASS'
+    WHEN rc.delete_rule IS NULL     THEN 'FAIL ← no FK found from user_preferences.user_id → auth.users'
+    ELSE 'FAIL ← delete_rule is ' || rc.delete_rule || ', expected CASCADE'
+  END AS status
+FROM information_schema.table_constraints tc
+JOIN information_schema.referential_constraints rc
+  ON rc.constraint_name = tc.constraint_name
+  AND rc.constraint_schema = tc.constraint_schema
+JOIN information_schema.key_column_usage kcu
+  ON kcu.constraint_name = tc.constraint_name
+  AND kcu.constraint_schema = tc.constraint_schema
+WHERE tc.table_schema    = 'public'
+  AND tc.table_name      = 'user_preferences'
+  AND tc.constraint_type = 'FOREIGN KEY'
+  AND kcu.column_name    = 'user_id';
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–017 are applied.
+-- All rows should show 'PASS' after migrations 001–018 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.

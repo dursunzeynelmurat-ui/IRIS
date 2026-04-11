@@ -42,3 +42,12 @@ export interface User {
   email: string | null;
   created_at: string;
 }
+
+// public.user_preferences
+export type ThemePreference = 'system' | 'light' | 'dark';
+
+export interface UserPreferences {
+  user_id: string;
+  theme: ThemePreference;
+  updated_at: string;
+}
