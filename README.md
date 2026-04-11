@@ -197,7 +197,8 @@ src/
 │   ├── SignalButton.tsx      # Shared Confirm/Dispute button — active/faded/loading/disabled states
 │   └── StatusBadge.tsx      # Shared status badge — border + subtle tint + uppercase label
 ├── context/
-│   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
+│   ├── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
+│   └── ThemeContext.tsx     # ThemeProvider + useTheme — resolves preference → scheme → navTheme
 ├── lib/
 │   ├── eventUtils.ts        # STATUS_LABEL, STATUS_COLOR, scoreColor — single source of truth for all status display logic
 │   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
@@ -212,7 +213,8 @@ src/
 ├── screens/
 │   ├── SignInScreen.tsx
 │   ├── EventListScreen.tsx
-│   └── EventDetailScreen.tsx
+│   ├── EventDetailScreen.tsx
+│   └── SettingsScreen.tsx       # Theme picker (System/Light/Dark) + Sign Out
 ├── services/
 │   └── signalService.ts     # castSignal(userId, eventId, type) — upsert only (trigger handles score)
 └── types/
@@ -287,7 +289,9 @@ Three-state conditional render:
 |---|---|
 | `loading === true` | Branded splash screen (IRIS wordmark + muted spinner) |
 | `userId === null` | `SignInScreen` (outside navigator) |
-| `userId` set | `NavigationContainer` + stack |
+| `userId` set | `ThemeProvider` → `ThemedApp` → `NavigationContainer` + stack |
+
+`ThemeProvider` is only mounted when authenticated — preferences are per-user. `ThemedApp` calls `useTheme()` to get the resolved navigation theme and status bar style, then renders the `NavigationContainer` and the full stack.
 
 ### Sign In / Sign Up
 
@@ -299,7 +303,8 @@ Three-state conditional render:
 
 ### Sign Out
 
-- Header button on both Event List and Event Detail screens
+- Header button on Event List screen (alongside ⚙ settings icon) and Event Detail screen
+- Also available in the Settings screen (Account section)
 - Calls `supabase.auth.signOut()`
 - `onAuthStateChange` fires → `userId` becomes null → app returns to `SignInScreen`
 
@@ -408,24 +413,38 @@ Used only by `EventDetailScreen` (single-event context).
 
 ### `useUserPreferences(userId)`
 
-Reads and writes the current user's `user_preferences` row.
+Low-level hook. Reads and writes the current user's `user_preferences` row directly. Most components should use `useTheme()` instead (see below).
 
-- **Fetch:** single `.maybeSingle()` query on mount; `loading` true until resolved
+- **Fetch:** single `.maybeSingle()` query on mount; `loading` starts `true` immediately when `userId` is known
 - **Update:** `updateTheme(theme)` — optimistic update, then upserts `{ user_id, theme, updated_at }` with `onConflict: 'user_id'`; on failure, re-fetches DB state to revert to ground truth
 - **Unauthenticated:** returns `preferences: null`, `updateTheme` is a no-op
 - **Auto-row:** every authenticated user has a preferences row created by `handle_new_user` on signup (default `theme: 'system'`); the insert policy allows a bootstrap upsert for accounts that predate migration 018
 
-**Frontend contract (read/write):**
-```ts
-// Read current theme
-const { preferences } = useUserPreferences(userId);
-const theme = preferences?.theme ?? 'system';
+**No RPC needed.** Direct `supabase.from('user_preferences')` access is safe because RLS restricts reads and writes to the authenticated user's own row.
 
-// Write theme change
-await updateTheme('dark');
+### `ThemeProvider` + `useTheme()`
+
+`ThemeContext` wraps the authenticated navigation stack in `App.tsx`.
+
+- Reads from `useUserPreferences(userId)` internally
+- Resolves `'system'` preference via `useColorScheme()` (falls back to `'dark'` when device scheme is unavailable)
+- Exposes `{ preference, resolvedScheme, navTheme, updateTheme, loading }`
+- `navTheme` is passed directly to `<NavigationContainer theme={navTheme}>` — navigation chrome adapts automatically
+- `StatusBar` style in `ThemedApp` is reactive: `'light'` (white icons) for dark scheme, `'dark'` (black icons) for light scheme
+
+**Consuming theme in a screen:**
+```ts
+const { preference, resolvedScheme, updateTheme } = useTheme();
+// resolvedScheme is always 'light' | 'dark' — safe for style decisions
 ```
 
-**No RPC needed.** Direct `supabase.from('user_preferences')` access is safe because RLS restricts reads and writes to the authenticated user's own row.
+### Settings Screen
+
+`SettingsScreen` is accessible via the ⚙ icon in the `EventList` header.
+
+- **Appearance section:** radio-style rows for System / Light / Dark; calls `updateTheme()` on tap
+- **Account section:** Sign Out button
+- Styles adapt to the current `resolvedScheme` — the screen correctly re-renders when the user changes their theme
 
 ### Feed Support Boundaries
 
@@ -457,7 +476,7 @@ Any future feed personalization feature would require a separate design decision
 Each card: title, colored status badge (colored border + text + subtle background tint), trust score bar (color-coded: green ≥67 / orange ≥34 / red <34), Confirm/Dispute signal buttons.  
 Signal buttons: semantic color system — idle state uses colored border + colored text (green for Confirm, red for Dispute); active state uses filled background + white text; submitting state shows white spinner on colored fill.  
 Vote state seeded from `useUserSignals` bulk fetch (one query for all cards); selected button fills solid, unselected fades (opacity 0.35).  
-Pull-to-refresh supported. Header: IRIS wordmark (letter-spaced) + Sign Out button.
+Pull-to-refresh supported. Header: IRIS wordmark (letter-spaced) + ⚙ settings icon + Sign Out button.
 
 ### Event Detail Screen
 
@@ -663,11 +682,13 @@ npx expo start
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
 - Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, signal permissive policy ownership, and user_preferences table integrity (001–018)
 - User preferences backend (migration 018): `user_preferences` table — theme preference (`system` | `light` | `dark`), auto-created on signup via `handle_new_user` trigger, RLS own-row read/update, RESTRICTIVE anon deny + RESTRICTIVE delete deny; `useUserPreferences(userId)` hook — fetch + optimistic upsert + revert on failure
+- Theme preference applied to the navigation chrome: `ThemeContext` (`src/context/ThemeContext.tsx`) resolves `user_preferences.theme` using `useColorScheme()` for `'system'`; `navTheme` wired into `<NavigationContainer>` so headers/tabs adapt; `StatusBar` style reactive to resolved scheme
+- Settings screen (`src/screens/SettingsScreen.tsx`): theme picker (System / Light / Dark) with radio-style selection; Account section with Sign Out; styles adapt to resolved scheme so the screen remains legible after a theme change; accessible via ⚙ icon in EventList header
 
 ### Not Implemented
 
 - Session persistence across restarts (disabled for Expo Go; re-enable SecureStoreAdapter + `persistSession: true` in `supabase.ts` for production EAS builds)
-- Theme preference applied to the UI — `user_preferences.theme` is stored and readable via `useUserPreferences`, but the UI does not yet consume it (no `ThemeProvider` wired up)
+- Full light-theme screen styles: `ThemeContext` drives the navigation chrome and `SettingsScreen`; all other screen `StyleSheet` objects use hardcoded dark colors. A complete light-theme pass would update all screen backgrounds, text, and component colors — deferred pending product decision on light-theme support
 - Offline / no-connection indicator
 - Push notifications
 - Rate limiting / abuse protection
