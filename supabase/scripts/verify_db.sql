@@ -34,9 +34,9 @@ WHERE schemaname = 'public'
   AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
 ORDER BY tablename, policyname;
 
--- ── Section 3: RESTRICTIVE deny policies — all 12 required ───────────────
+-- ── Section 3: RESTRICTIVE deny policies — all 14 required ──────────────
 --
--- After migrations 004, 005, 007, 010 the following RESTRICTIVE policies
+-- After migrations 004, 005, 007, 010, 018 the following RESTRICTIVE policies
 -- must exist. Any missing row = FAIL.
 
 WITH expected_restrictive AS (
@@ -450,15 +450,47 @@ WHERE schemaname = 'public'
 
 -- ── Section 16: user_preferences table (migration 018) ───────────────────
 --
--- Verifies the user_preferences table introduced in migration 018.
--- Covers: permissive policy ownership expressions, default value, and
--- CASCADE delete linkage.
+-- Comprehensive verification of the user_preferences table.
 --
--- RLS enablement   → Section 1
+-- RLS enablement   → Section 1 (included there)
 -- RESTRICTIVE deny → Sections 3 + 11 (deny_prefs_anon, deny_prefs_delete)
 -- CHECK constraint → Section 12 (user_preferences_theme_check)
+-- This section covers: table + column existence, permissive policy ownership
+-- expressions, theme default value, CASCADE FK linkage, and absence of
+-- unexpected permissive policies.
 
--- ── Part A: Permissive policy ownership expressions ───────────────────────
+-- ── Part A: Table and column existence ───────────────────────────────────
+--
+-- All downstream parts in this section assume the table exists. A FAIL here
+-- means migration 018 was not applied — other parts will show confusing NULLs.
+
+SELECT
+  cl.relname AS table_name,
+  CASE WHEN cl.oid IS NOT NULL THEN 'PASS — table exists' ELSE 'FAIL ← user_preferences table missing (apply migration 018)' END AS table_status,
+  (
+    SELECT COUNT(*) FROM pg_attribute a
+    WHERE a.attrelid = cl.oid
+      AND a.attname IN ('user_id', 'theme', 'updated_at')
+      AND NOT a.attisdropped
+  ) AS expected_columns_found,
+  CASE
+    WHEN cl.oid IS NULL
+      THEN 'FAIL ← table missing (apply migration 018)'
+    WHEN (
+      SELECT COUNT(*) FROM pg_attribute a
+      WHERE a.attrelid = cl.oid
+        AND a.attname IN ('user_id', 'theme', 'updated_at')
+        AND NOT a.attisdropped
+    ) < 3
+      THEN 'FAIL ← one or more expected columns (user_id, theme, updated_at) not found'
+    ELSE 'PASS — all 3 expected columns present'
+  END AS column_status
+FROM pg_namespace n
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = n.oid AND cl.relname = 'user_preferences' AND cl.relkind = 'r'
+WHERE n.nspname = 'public';
+
+-- ── Part B: Permissive policy ownership expressions ───────────────────────
 --
 -- prefs_read_own:   USING must contain user_id
 -- prefs_insert_own: WITH CHECK must contain user_id
@@ -472,10 +504,10 @@ WITH expected_prefs_policies AS (
   ) AS t(polname, cmd, required_qual_fragment, required_check_fragment)
 )
 SELECT
-  e.polname   AS "policy",
+  e.polname    AS "policy",
   e.cmd,
-  p.qual       AS "using_expr",
-  p.with_check AS "with_check_expr",
+  p.qual        AS "using_expr",
+  p.with_check  AS "with_check_expr",
   CASE
     WHEN p.policyname IS NULL
       THEN 'FAIL ← policy missing (apply migration 018)'
@@ -494,48 +526,84 @@ LEFT JOIN pg_policies p
   AND p.policyname = e.polname
 ORDER BY e.polname;
 
--- ── Part B: Default theme value ───────────────────────────────────────────
+-- ── Part C: Unexpected permissive policies ────────────────────────────────
 --
--- user_preferences.theme must default to 'system'. If the default is wrong,
--- new user rows will have an unexpected theme value.
+-- The only permissive policies that should exist on user_preferences are:
+--   prefs_read_own, prefs_insert_own, prefs_update_own
+-- An additional permissive policy (e.g. an accidental FOR ALL or FOR DELETE)
+-- would be a security gap that Part B above would not catch.
 
 SELECT
-  column_name,
-  column_default,
+  policyname AS "policy",
+  cmd,
+  roles,
   CASE
-    WHEN column_default = '''system''::text' THEN 'PASS'
-    WHEN column_default IS NULL              THEN 'FAIL ← theme column has no default'
-    ELSE                                          'FAIL ← default is ' || column_default || ', expected ''system'''
+    WHEN policyname IN ('prefs_read_own', 'prefs_insert_own', 'prefs_update_own')
+      THEN 'PASS — expected permissive policy'
+    ELSE 'FAIL ← unexpected permissive policy (review and remove): ' || policyname
   END AS status
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name   = 'user_preferences'
-  AND column_name  = 'theme';
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'user_preferences'
+  AND permissive = 'PERMISSIVE'
+ORDER BY policyname;
 
--- ── Part C: CASCADE delete linkage ────────────────────────────────────────
+-- ── Part D: Default theme value ───────────────────────────────────────────
+--
+-- user_preferences.theme must default to 'system'. Uses pg_attrdef directly
+-- to avoid information_schema version sensitivity.
+
+SELECT
+  a.attname                          AS column_name,
+  pg_get_expr(d.adbin, d.adrelid)   AS column_default,
+  CASE
+    WHEN d.adbin IS NULL
+      THEN 'FAIL ← theme column has no default (any new user row will require explicit theme value)'
+    WHEN pg_get_expr(d.adbin, d.adrelid) LIKE '%system%'
+      THEN 'PASS'
+    ELSE 'FAIL ← default does not include ''system'': ' || pg_get_expr(d.adbin, d.adrelid)
+  END AS status
+FROM pg_attribute a
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE a.attrelid = 'public.user_preferences'::regclass
+  AND a.attname  = 'theme'
+  AND NOT a.attisdropped;
+
+-- ── Part E: CASCADE delete linkage ────────────────────────────────────────
 --
 -- user_preferences.user_id must reference auth.users(id) ON DELETE CASCADE.
--- If CASCADE is missing, deleting an auth user will fail or leave orphan rows.
+-- Uses pg_constraint directly — reliable for cross-schema FKs (auth.users
+-- is in the auth schema, not public, which makes information_schema joins
+-- fragile).
 
 SELECT
-  tc.constraint_name,
-  rc.delete_rule,
+  c.conname AS constraint_name,
+  CASE c.confdeltype
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  n_ref.nspname || '.' || cl_ref.relname AS referenced_table,
   CASE
-    WHEN rc.delete_rule = 'CASCADE' THEN 'PASS'
-    WHEN rc.delete_rule IS NULL     THEN 'FAIL ← no FK found from user_preferences.user_id → auth.users'
-    ELSE 'FAIL ← delete_rule is ' || rc.delete_rule || ', expected CASCADE'
+    WHEN c.confdeltype = 'c'
+      THEN 'PASS'
+    WHEN c.confdeltype = 'a'
+      THEN 'FAIL ← delete_rule is NO ACTION — deleting auth.users row leaves orphan preferences'
+    WHEN c.confdeltype = 'r'
+      THEN 'FAIL ← delete_rule is RESTRICT — cannot delete auth.users row while preferences exist'
+    ELSE 'FAIL ← delete_rule is not CASCADE: ' || c.confdeltype::text
   END AS status
-FROM information_schema.table_constraints tc
-JOIN information_schema.referential_constraints rc
-  ON rc.constraint_name = tc.constraint_name
-  AND rc.constraint_schema = tc.constraint_schema
-JOIN information_schema.key_column_usage kcu
-  ON kcu.constraint_name = tc.constraint_name
-  AND kcu.constraint_schema = tc.constraint_schema
-WHERE tc.table_schema    = 'public'
-  AND tc.table_name      = 'user_preferences'
-  AND tc.constraint_type = 'FOREIGN KEY'
-  AND kcu.column_name    = 'user_id';
+FROM pg_constraint c
+JOIN pg_class cl         ON cl.oid  = c.conrelid
+JOIN pg_namespace n      ON n.oid   = cl.relnamespace
+JOIN pg_class cl_ref     ON cl_ref.oid = c.confrelid
+JOIN pg_namespace n_ref  ON n_ref.oid  = cl_ref.relnamespace
+WHERE n.nspname  = 'public'
+  AND cl.relname = 'user_preferences'
+  AND c.contype  = 'f';
 
 -- ── Summary ───────────────────────────────────────────────────────────────
 -- All rows should show 'PASS' after migrations 001–018 are applied.

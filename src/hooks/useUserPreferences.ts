@@ -23,7 +23,9 @@ interface UseUserPreferencesResult {
  */
 export function useUserPreferences(userId: string | null): UseUserPreferencesResult {
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Start loading immediately if userId is already known at mount time.
+  // Consistent with the useUserSignal pattern (useState(!!userId)).
+  const [loading, setLoading] = useState(userId !== null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
