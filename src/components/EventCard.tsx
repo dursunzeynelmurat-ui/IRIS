@@ -7,8 +7,10 @@ import {
 } from 'react-native';
 import { SignalButton } from './SignalButton';
 import { StatusBadge } from './StatusBadge';
+import { TrustRing } from './TrustRing';
+import { useTheme } from '../context/ThemeContext';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { STATUS_COLOR, STATUS_LABEL, scoreColor } from '../lib/eventUtils';
+import { STATUS_LABEL } from '../lib/eventUtils';
 import { castSignal } from '../services/signalService';
 import { Event, SignalType } from '../types';
 
@@ -29,6 +31,8 @@ export function EventCard({
   onSignalCast,
   onPress,
 }: EventCardProps) {
+  const { colors } = useTheme();
+
   // Signal state is seeded from the bulk fetch — no per-card DB query.
   const [currentSignal, setCurrentSignal] = useState<SignalType | null>(initialSignal);
   const [submitting, setSubmitting] = useState(false);
@@ -38,7 +42,6 @@ export function EventCard({
   // parent's bulk fetch resolves after the FlatList has already rendered) are
   // synced into local state. Once the user has submitted, local state is
   // authoritative and prop changes are ignored to preserve optimistic updates.
-  // The ref resets on unmount, so remounts re-accept the (now-current) parent value.
   const hasLocalSubmit = useRef(false);
 
   useEffect(() => {
@@ -47,14 +50,12 @@ export function EventCard({
     }
   }, [initialSignal]);
 
-  const statusColor = STATUS_COLOR[event.status];
-  const trustScore  = event.trust_score ?? 50;
-  const barColor    = scoreColor(trustScore);
+  const trustScore = event.trust_score ?? 50;
 
   async function submitSignal(type: SignalType) {
-    if (type === currentSignal) return; // no-op: already active
+    if (type === currentSignal) return;
     if (submitting) return;
-    hasLocalSubmit.current = true; // local state is authoritative from here on
+    hasLocalSubmit.current = true;
 
     const previous = currentSignal;
     setCurrentSignal(type); // optimistic update
@@ -62,11 +63,11 @@ export function EventCard({
 
     try {
       await castSignal(userId, event.id, type);
-      onSignalCast(type); // keep parent map current for remount consistency
+      onSignalCast(type);
     } catch (err) {
       console.error('[EventCard] castSignal:', err);
-      setCurrentSignal(previous); // revert on failure
-      hasLocalSubmit.current = false; // allow initialSignal sync again — no local change persisted
+      setCurrentSignal(previous); // revert
+      hasLocalSubmit.current = false;
     }
 
     setSubmitting(false);
@@ -74,7 +75,7 @@ export function EventCard({
 
   return (
     <TouchableOpacity
-      style={[styles.card, { borderLeftColor: statusColor }]}
+      style={[styles.card, { backgroundColor: colors.bgElevated, borderColor: colors.border }]}
       onPress={onPress}
       activeOpacity={0.75}
       accessibilityRole="button"
@@ -82,44 +83,32 @@ export function EventCard({
       accessibilityHint="Opens event details"
     >
       {/* Title */}
-      <Text style={styles.cardTitle} numberOfLines={2}>
+      <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
         {event.title}
       </Text>
 
-      {/* Status badge + trust score */}
+      {/* Status badge + trust ring */}
       <View style={styles.cardMeta}>
         <StatusBadge status={event.status} />
-        <Text style={styles.scoreLabel}>
-          Trust{' '}
-          <Text style={[styles.scoreValue, { color: barColor }]}>
-            {trustScore}
-          </Text>
-          <Text style={styles.scoreMax}>/100</Text>
-        </Text>
-      </View>
-
-      {/* Trust score bar */}
-      <View style={styles.scoreBarBg}>
-        <View
-          style={[
-            styles.scoreBarFill,
-            { width: `${trustScore}%`, backgroundColor: barColor },
-          ]}
-        />
+        <View style={styles.metaSpacer} />
+        <TrustRing score={trustScore} size="sm" />
       </View>
 
       {/* Source count + age */}
       <View style={styles.cardFooter}>
-        <Text style={styles.sourceCount}>
+        <Text style={[styles.footerDetail, { color: colors.textTertiary }]}>
           {event.source_count === 1 ? '1 source' : `${event.source_count} sources`}
         </Text>
-        <Text style={styles.cardAge}>{formatRelativeTime(event.created_at)}</Text>
+        <Text style={[styles.footerDot, { color: colors.borderStrong }]}>·</Text>
+        <Text style={[styles.footerDetail, { color: colors.textTertiary }]}>
+          {formatRelativeTime(event.created_at)}
+        </Text>
       </View>
 
-      {/* Divider: separates content area from signal actions */}
-      <View style={styles.actionsDivider} />
+      {/* Divider */}
+      <View style={[styles.actionsDivider, { backgroundColor: colors.border }]} />
 
-      {/* Signal buttons */}
+      {/* Signal pills */}
       <View style={styles.actions}>
         {(['confirm', 'dispute'] as SignalType[]).map((type) => {
           const isSelected = currentSignal === type;
@@ -127,6 +116,7 @@ export function EventCard({
             <SignalButton
               key={type}
               type={type}
+              size="compact"
               active={isSelected}
               loading={!!(submitting && isSelected)}
               disabled={!!(isSelected || submitting)}
@@ -144,73 +134,48 @@ export function EventCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1c1c1e',
     borderRadius: 12,
     padding: 16,
-    borderLeftWidth: 4,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#f2f2f2',
-    marginBottom: 10,
     lineHeight: 22,
+    marginBottom: 12,
   },
+
+  // ── Meta row (badge + ring) ──
   cardMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  scoreLabel: {
-    fontSize: 13,
-    color: '#8e8e93',
-  },
-  scoreValue: {
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  scoreMax: {
-    color: '#8e8e93',
-    fontSize: 13,
-  },
-
-  // ── Score bar ──
-  scoreBarBg: {
-    height: 5,
-    backgroundColor: '#2c2c2e',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 14,
-  },
-  scoreBarFill: {
-    height: '100%',
-    borderRadius: 3,
+  metaSpacer: {
+    flex: 1,
   },
 
   // ── Footer ──
   cardFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
   },
-  sourceCount: {
+  footerDetail: {
     fontSize: 11,
-    color: '#636366',
   },
-  cardAge: {
+  footerDot: {
     fontSize: 11,
-    color: '#636366',
   },
 
-  // ── Signal buttons ──
+  // ── Signal row ──
   actionsDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#2c2c2e',
     marginBottom: 10,
   },
   actions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
 });

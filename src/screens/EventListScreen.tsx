@@ -1,125 +1,147 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { BottomTabBar } from '../components/BottomTabBar';
 import { EventCard } from '../components/EventCard';
+import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { useEvents } from '../hooks/useEvents';
 import { useUserSignals } from '../hooks/useUserSignals';
-import { STATUS_COLOR } from '../lib/eventUtils';
-import { supabase } from '../lib/supabase';
-import { EventStatus } from '../types';
+import { Event } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventList'>;
 
-type FilterOption = 'all' | EventStatus;
+// ── Feed tab types ────────────────────────────────────────────
 
-const FILTERS: { key: FilterOption; label: string }[] = [
-  { key: 'all',        label: 'All' },
-  { key: 'emerging',   label: 'Emerging' },
-  { key: 'developing', label: 'Developing' },
-  { key: 'verified',   label: 'Verified' },
-  { key: 'disputed',   label: 'Disputed' },
+type FeedTab = 'new' | 'verified' | 'rising';
+
+interface Tab {
+  key: FeedTab;
+  label: string;
+}
+
+const TABS: Tab[] = [
+  { key: 'new',      label: 'New' },
+  { key: 'verified', label: 'Verified' },
+  { key: 'rising',   label: 'Rising' },
 ];
+
+// ── Tab filtering logic ───────────────────────────────────────
+
+function filterEvents(events: Event[], tab: FeedTab): Event[] {
+  switch (tab) {
+    case 'new':
+      // All events, most recent first
+      return [...events].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    case 'verified':
+      return events.filter((e) => e.status === 'verified');
+    case 'rising':
+      // Gaining credibility: emerging + developing, highest trust first
+      return events
+        .filter((e) => e.status === 'emerging' || e.status === 'developing')
+        .sort((a, b) => (b.trust_score ?? 0) - (a.trust_score ?? 0));
+  }
+}
+
+// ── Empty message per tab ─────────────────────────────────────
+
+function emptyMessage(tab: FeedTab): string {
+  switch (tab) {
+    case 'new':      return 'No events yet.';
+    case 'verified': return 'No verified events yet.';
+    case 'rising':   return 'No rising events yet.';
+  }
+}
+
+// ── Screen ───────────────────────────────────────────────────
 
 export function EventListScreen({ navigation }: Props) {
   const { events, loading, refreshing, error, refetch } = useEvents();
   const { userId } = useAuth();
-  // One bulk fetch instead of per-card queries (eliminates N+1)
   const { signalMap, setSignal } = useUserSignals(userId);
-  const [activeFilter, setActiveFilter] = useState<FilterOption>('all');
+  const { colors } = useTheme();
+  const [activeTab, setActiveTab] = useState<FeedTab>('new');
 
-  useEffect(() => {
-    if (!userId) return;
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => supabase.auth.signOut()}
-          style={styles.signOutBtn}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, userId]);
-
-  const filtered = activeFilter === 'all'
-    ? events
-    : events.filter((e) => e.status === activeFilter);
+  const filtered = useMemo(() => filterEvents(events, activeTab), [events, activeTab]);
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#fff" />
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator size="large" color={colors.textSecondary} />
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>Unable to load events.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.errorText, { color: colors.textPrimary }]}>
+          Unable to load events.
+        </Text>
         <TouchableOpacity
-          style={styles.retryBtn}
+          style={[styles.retryBtn, { borderColor: colors.borderStrong }]}
           onPress={refetch}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Retry loading events"
         >
-          <Text style={styles.retryText}>Retry</Text>
+          <Text style={[styles.retryText, { color: colors.textPrimary }]}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Filter tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterBar}
-        contentContainerStyle={styles.filterBarContent}
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      {/* Feed tabs */}
+      <View
+        style={[
+          styles.tabBar,
+          { borderBottomColor: colors.border, backgroundColor: colors.bg },
+        ]}
         accessibilityRole="tablist"
       >
-        {FILTERS.map(({ key, label }) => {
-          const isActive = activeFilter === key;
-          const accentColor = key === 'all' ? '#f2f2f2' : STATUS_COLOR[key as EventStatus];
+        {TABS.map(({ key, label }) => {
+          const isActive = activeTab === key;
           return (
             <TouchableOpacity
               key={key}
-              style={[
-                styles.filterChip,
-                isActive && { borderColor: accentColor, backgroundColor: accentColor + '22' },
-              ]}
-              onPress={() => setActiveFilter(key)}
+              style={styles.tab}
+              onPress={() => setActiveTab(key)}
               activeOpacity={0.7}
               accessibilityRole="tab"
-              accessibilityLabel={key === 'all' ? 'All events' : `${label} events`}
+              accessibilityLabel={`${label} events`}
               accessibilityState={{ selected: isActive }}
             >
-              <Text style={[
-                styles.filterChipText,
-                isActive && { color: accentColor },
-              ]}>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  {
+                    color: isActive ? colors.iris : colors.textTertiary,
+                    fontWeight: isActive ? '600' : '400',
+                  },
+                ]}
+              >
                 {label}
               </Text>
+              {isActive && (
+                <View style={[styles.tabIndicator, { backgroundColor: colors.iris }]} />
+              )}
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
 
       <FlatList
         style={styles.list}
@@ -141,19 +163,25 @@ export function EventListScreen({ navigation }: Props) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={refetch}
-            tintColor="#8e8e93"
+            tintColor={colors.textSecondary}
           />
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              {activeFilter === 'all' ? 'No events yet.' : `No ${activeFilter} events.`}
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              {emptyMessage(activeTab)}
             </Text>
-            <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+              Pull down to refresh.
+            </Text>
           </View>
         }
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        ItemSeparatorComponent={() => (
+          <View style={[styles.separator]} />
+        )}
       />
+
+      <BottomTabBar />
     </View>
   );
 }
@@ -161,30 +189,33 @@ export function EventListScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d0d0d',
   },
-  filterBar: {
-    flexGrow: 0,
+
+  // ── Feed tabs ──
+  tabBar: {
+    flexDirection: 'row',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2c2c2e',
   },
-  filterBarContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    position: 'relative',
   },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#3a3a3c',
+  tabLabel: {
+    fontSize: 14,
+    letterSpacing: 0.1,
   },
-  filterChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8e8e93',
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    left: '25%',
+    right: '25%',
+    height: 2,
+    borderRadius: 1,
   },
+
+  // ── List ──
   list: {
     flex: 1,
   },
@@ -201,30 +232,13 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0d0d0d',
     padding: 24,
   },
   separator: {
     height: 10,
   },
-  errorText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#f2f2f2',
-    marginBottom: 16,
-  },
-  retryBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#3a3a3c',
-    borderRadius: 8,
-  },
-  retryText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#f2f2f2',
-  },
+
+  // ── Empty state ──
   emptyContainer: {
     alignItems: 'center',
     gap: 6,
@@ -232,17 +246,25 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#8e8e93',
   },
   emptyHint: {
     fontSize: 13,
-    color: '#636366',
   },
-  signOutBtn: {
-    marginRight: 4,
+
+  // ── Error state ──
+  errorText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 16,
   },
-  signOutText: {
+  retryBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  retryText: {
     fontSize: 14,
-    color: '#ff453a',
+    fontWeight: '600',
   },
 });

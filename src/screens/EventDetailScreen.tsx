@@ -10,14 +10,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { supabase } from '../lib/supabase';
 import { SignalButton } from '../components/SignalButton';
 import { StatusBadge } from '../components/StatusBadge';
+import { TrustRing } from '../components/TrustRing';
+import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { scoreColor } from '../lib/eventUtils';
 import { EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -25,7 +25,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
 // ── Sub-components ────────────────────────────────────────────
 
-function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }) {
+function UpdateItem({ update, isLast, colors }: { update: EventUpdate; isLast: boolean; colors: ReturnType<typeof useTheme>['colors'] }) {
   const hasLink = !!update.source_url;
 
   function openLink() {
@@ -41,8 +41,10 @@ function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }
     <View style={styles.updateRow}>
       {/* Timeline gutter: dot + connector (omitted on last item) */}
       <View style={styles.timelineGutter}>
-        <View style={styles.timelineDot} />
-        {!isLast && <View style={styles.timelineConnector} />}
+        <View style={[styles.timelineDot, { backgroundColor: colors.borderStrong }]} />
+        {!isLast && (
+          <View style={[styles.timelineConnector, { backgroundColor: colors.border }]} />
+        )}
       </View>
 
       {/* Update content */}
@@ -59,10 +61,16 @@ function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }
             </Text>
           </TouchableOpacity>
         ) : (
-          <Text style={styles.updateSource}>{update.source_name}</Text>
+          <Text style={[styles.updateSource, { color: colors.textSecondary }]}>
+            {update.source_name}
+          </Text>
         )}
-        <Text style={styles.updateContent}>{update.content}</Text>
-        <Text style={styles.updateDate}>{formatRelativeTime(update.created_at)}</Text>
+        <Text style={[styles.updateContent, { color: colors.textPrimary }]}>
+          {update.content}
+        </Text>
+        <Text style={[styles.updateDate, { color: colors.textTertiary }]}>
+          {formatRelativeTime(update.created_at)}
+        </Text>
       </View>
     </View>
   );
@@ -70,12 +78,11 @@ function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }
 
 interface SignalSectionProps {
   eventId: string;
-  // userId is always non-null here: App.tsx only renders the navigator when
-  // userId !== null, so EventDetailScreen is unreachable while unauthenticated.
   userId: string;
+  colors: ReturnType<typeof useTheme>['colors'];
 }
 
-function SignalSection({ eventId, userId }: SignalSectionProps) {
+function SignalSection({ eventId, userId, colors }: SignalSectionProps) {
   const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
@@ -85,34 +92,34 @@ function SignalSection({ eventId, userId }: SignalSectionProps) {
     <View style={styles.signalSection}>
       <View style={styles.signalButtons}>
         {fetchLoading ? (
-          // Inert placeholder shapes while the initial signal fetch is in-flight.
-          // Prevents the idle-color → active-fill flash on navigation.
           <>
-            <View style={[styles.signalBtnPlaceholder]} />
-            <View style={[styles.signalBtnPlaceholder]} />
+            <View style={[styles.signalBtnPlaceholder, { borderColor: colors.border }]} />
+            <View style={[styles.signalBtnPlaceholder, { borderColor: colors.border }]} />
           </>
         ) : (
           <>
             <SignalButton
               type="confirm"
-              active={!!(currentSignal === 'confirm')}
-              loading={!!(submitting && currentSignal === 'confirm')}
-              disabled={!!submitting}
-              faded={!!(currentSignal !== null && currentSignal !== 'confirm')}
+              active={currentSignal === 'confirm'}
+              loading={submitting && currentSignal === 'confirm'}
+              disabled={submitting}
+              faded={currentSignal !== null && currentSignal !== 'confirm'}
               onPress={() => submitSignal('confirm')}
             />
             <SignalButton
               type="dispute"
-              active={!!(currentSignal === 'dispute')}
-              loading={!!(submitting && currentSignal === 'dispute')}
-              disabled={!!submitting}
-              faded={!!(currentSignal !== null && currentSignal !== 'dispute')}
+              active={currentSignal === 'dispute'}
+              loading={submitting && currentSignal === 'dispute'}
+              disabled={submitting}
+              faded={currentSignal !== null && currentSignal !== 'dispute'}
               onPress={() => submitSignal('dispute')}
             />
           </>
         )}
       </View>
-      {!fetchLoading && error && <Text style={styles.signalError}>{error}</Text>}
+      {!fetchLoading && error && (
+        <Text style={styles.signalError}>{error}</Text>
+      )}
     </View>
   );
 }
@@ -123,53 +130,47 @@ export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
   const { event, updates, loading, refreshing, error, refetch } = useEventDetail(eventId ?? '');
   const { userId } = useAuth();
+  const { colors } = useTheme();
 
-  // Dynamic header: event title + sign-out button
+  // Dynamic header: event title only (sign out removed — lives in Profile)
   useEffect(() => {
     navigation.setOptions({
       title: event?.title ?? 'Event Detail',
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => supabase.auth.signOut()}
-          style={styles.signOutBtn}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
-      ),
     });
   }, [event?.title, navigation]);
 
   if (!eventId) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>Unable to load event.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.errorText, { color: colors.textPrimary }]}>
+          Unable to load event.
+        </Text>
       </View>
     );
   }
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#fff" />
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator size="large" color={colors.textSecondary} />
       </View>
     );
   }
 
   if (error || !event) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>Unable to load event.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.errorText, { color: colors.textPrimary }]}>
+          Unable to load event.
+        </Text>
         <TouchableOpacity
-          style={styles.retryButton}
+          style={[styles.retryButton, { borderColor: colors.borderStrong }]}
           onPress={refetch}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Retry loading event"
         >
-          <Text style={styles.retryText}>Retry</Text>
+          <Text style={[styles.retryText, { color: colors.textPrimary }]}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
@@ -177,59 +178,61 @@ export function EventDetailScreen({ route, navigation }: Props) {
 
   const sourceLabel = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
   const trustScore  = event.trust_score ?? 50;
-  const barColor    = scoreColor(trustScore);
 
   return (
     <FlatList
-      style={styles.screen}
+      style={[styles.screen, { backgroundColor: colors.bg }]}
       data={updates}
       keyExtractor={(item) => item.id}
       renderItem={({ item, index }) => (
-        <UpdateItem update={item} isLast={index === updates.length - 1} />
+        <UpdateItem
+          update={item}
+          isLast={index === updates.length - 1}
+          colors={colors}
+        />
       )}
       contentContainerStyle={styles.list}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={refetch}
-          tintColor="#8e8e93"
+          tintColor={colors.textSecondary}
         />
       }
       ListHeaderComponent={
         <View style={styles.header}>
-          <Text style={styles.title}>{event.title}</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>{event.title}</Text>
 
-          {/* Status badge + source count */}
+          {/* Status badge + source count + trust ring */}
           <View style={styles.metaRow}>
             <StatusBadge status={event.status} />
-            <Text style={styles.metaDot}>·</Text>
-            <Text style={styles.metaDetail}>{sourceLabel}</Text>
+            <Text style={[styles.metaDot, { color: colors.borderStrong }]}>·</Text>
+            <Text style={[styles.metaDetail, { color: colors.textSecondary }]}>
+              {sourceLabel}
+            </Text>
+            <View style={styles.metaSpacer} />
+            <TrustRing score={trustScore} size="md" />
           </View>
 
-          {/* Trust score label + bar */}
-          <Text style={styles.scoreLabel}>
-            Trust{' '}
-            <Text style={[styles.scoreValue, { color: barColor }]}>{trustScore}</Text>
-            <Text style={styles.scoreMax}>/100</Text>
+          {userId && (
+            <SignalSection eventId={event.id} userId={userId} colors={colors} />
+          )}
+
+          <Text
+            style={[styles.sectionLabel, { color: colors.textTertiary }]}
+          >
+            Timeline
           </Text>
-          <View style={styles.scoreBarBg}>
-            <View
-              style={[
-                styles.scoreBarFill,
-                { width: `${trustScore}%`, backgroundColor: barColor },
-              ]}
-            />
-          </View>
-
-          {userId && <SignalSection eventId={event.id} userId={userId} />}
-
-          <Text style={styles.sectionLabel}>Timeline</Text>
         </View>
       }
       ListEmptyComponent={
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No updates yet.</Text>
-          <Text style={styles.emptyHint}>Pull down to refresh.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            No updates yet.
+          </Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+            Pull down to refresh.
+          </Text>
         </View>
       }
     />
@@ -241,14 +244,12 @@ export function EventDetailScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#0d0d0d',
   },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: '#0d0d0d',
   },
   list: {
     padding: 16,
@@ -261,52 +262,26 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#f2f2f2',
     lineHeight: 30,
-    marginBottom: 10,
+    marginBottom: 12,
   },
 
-  // ── Status badge + meta row ──
+  // ── Meta row ──
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 20,
     flexWrap: 'wrap',
   },
   metaDot: {
     fontSize: 13,
-    color: '#3a3a3c',
   },
   metaDetail: {
     fontSize: 13,
-    color: '#8e8e93',
   },
-
-  // ── Trust score ──
-  scoreLabel: {
-    fontSize: 13,
-    color: '#8e8e93',
-    marginBottom: 6,
-  },
-  scoreValue: {
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  scoreMax: {
-    color: '#8e8e93',
-    fontSize: 13,
-  },
-  scoreBarBg: {
-    height: 5,
-    backgroundColor: '#2c2c2e',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-  scoreBarFill: {
-    height: '100%',
-    borderRadius: 3,
+  metaSpacer: {
+    flex: 1,
   },
 
   // ── Signal section ──
@@ -317,25 +292,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
-  // Placeholder shape shown while fetchLoading — matches SignalButton dimensions.
   signalBtnPlaceholder: {
     flex: 1,
     minHeight: 40,
-    borderRadius: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#2c2c2e',
   },
   signalError: {
     marginTop: 8,
     fontSize: 12,
-    color: '#ff453a',
+    color: '#e5193e',
   },
 
   // ── Section label ──
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#636366',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 16,
@@ -354,12 +326,10 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#3a3a3c',
   },
   timelineConnector: {
     flex: 1,
     width: 1,
-    backgroundColor: '#2c2c2e',
     marginTop: 5,
   },
   updateBody: {
@@ -370,7 +340,6 @@ const styles = StyleSheet.create({
   updateSource: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#aeaeb2',
     marginBottom: 4,
   },
   updateSourceLink: {
@@ -379,13 +348,11 @@ const styles = StyleSheet.create({
   },
   updateContent: {
     fontSize: 15,
-    color: '#f2f2f2',
     lineHeight: 22,
     marginBottom: 6,
   },
   updateDate: {
     fontSize: 11,
-    color: '#636366',
   },
 
   // ── Empty / error ──
@@ -394,36 +361,24 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: '#8e8e93',
     marginBottom: 4,
   },
   emptyHint: {
     fontSize: 12,
-    color: '#636366',
   },
   errorText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#f2f2f2',
     marginBottom: 16,
   },
   retryButton: {
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#3a3a3c',
     borderRadius: 8,
   },
   retryText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#f2f2f2',
-  },
-  signOutBtn: {
-    marginRight: 4,
-  },
-  signOutText: {
-    fontSize: 14,
-    color: '#ff453a',
   },
 });
