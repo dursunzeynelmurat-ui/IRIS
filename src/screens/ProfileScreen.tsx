@@ -17,74 +17,53 @@ import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 
-// Derive initials from email: "jane@example.com" → "J"
+// ── Utilities ─────────────────────────────────────────────────
+
 function emailInitial(email: string | null): string {
   if (!email) return '?';
   return email.charAt(0).toUpperCase();
 }
 
-// Abbreviate user ID for display: "abc1234567890" → "···4567890"
 function shortId(id: string | null): string {
   if (!id) return '—';
   return id.length > 8 ? `···${id.slice(-8)}` : id;
 }
 
-// ── Row components ────────────────────────────────────────────
-
-function SectionHeader({ label, textColor }: { label: string; textColor: string }) {
-  return (
-    <Text style={[styles.sectionHeader, { color: textColor }]}>{label}</Text>
-  );
+function formatMemberSince(isoDate: string | null | undefined): string {
+  if (!isoDate) return '';
+  try {
+    const d = new Date(isoDate);
+    return `Member since ${d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`;
+  } catch {
+    return '';
+  }
 }
 
-interface RowProps {
+// ── Row primitives ────────────────────────────────────────────
+
+function SectionLabel({ label, color }: { label: string; color: string }) {
+  return <Text style={[styles.sectionLabel, { color }]}>{label}</Text>;
+}
+
+interface NavRowProps {
   label: string;
-  detail?: string;
-  onPress?: () => void;
-  destructive?: boolean;
+  onPress: () => void;
   textColor: string;
   borderColor: string;
-  detailColor: string;
+  accentColor: string;
 }
 
-function SettingsRow({
-  label,
-  detail,
-  onPress,
-  destructive = false,
-  textColor,
-  borderColor,
-  detailColor,
-}: RowProps) {
-  const labelColor = destructive ? '#e5193e' : textColor;
-
-  if (!onPress) {
-    return (
-      <View style={[styles.row, { borderBottomColor: borderColor }]}>
-        <Text style={[styles.rowLabel, { color: labelColor }]}>{label}</Text>
-        {detail !== undefined && (
-          <Text style={[styles.rowDetail, { color: detailColor }]}>{detail}</Text>
-        )}
-      </View>
-    );
-  }
-
+function NavRow({ label, onPress, textColor, borderColor, accentColor }: NavRowProps) {
   return (
     <TouchableOpacity
       style={[styles.row, { borderBottomColor: borderColor }]}
       onPress={onPress}
       activeOpacity={0.7}
-      accessibilityRole={destructive ? 'button' : 'menuitem'}
+      accessibilityRole="menuitem"
       accessibilityLabel={label}
     >
-      <Text style={[styles.rowLabel, { color: labelColor }]}>{label}</Text>
-      {detail !== undefined ? (
-        <Text style={[styles.rowDetail, { color: detailColor }]}>{detail}</Text>
-      ) : (
-        !destructive && (
-          <Text style={[styles.chevron, { color: detailColor }]}>›</Text>
-        )
-      )}
+      <Text style={[styles.rowLabel, { color: textColor }]}>{label}</Text>
+      <Text style={[styles.chevron, { color: accentColor }]}>›</Text>
     </TouchableOpacity>
   );
 }
@@ -94,32 +73,34 @@ function SettingsRow({
 export function ProfileScreen({ navigation }: Props) {
   const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
-  const [email, setEmail]   = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const [email, setEmail]       = useState<string | null>(null);
+  const [userId, setUserId]     = useState<string | null>(null);
+  const [memberSince, setMemberSince] = useState<string>('');
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? null);
-      setUserId(data.user?.id ?? null);
+      const user = data.user;
+      setEmail(user?.email ?? null);
+      setUserId(user?.id ?? null);
+      setMemberSince(formatMemberSince(user?.created_at));
     });
   }, []);
 
   async function handleSignOut() {
-    setLoading(true);
+    if (signingOut) return;
+    setSigningOut(true);
     await supabase.auth.signOut();
     // onAuthStateChange in AuthContext fires → App.tsx re-renders to SignInScreen.
+    // No need to reset signingOut — the component will unmount.
   }
-
-  const initial = emailInitial(email);
-
-  const sectionBg = [styles.section, { backgroundColor: colors.bgElevated }];
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
       <StatusBar style={resolved === 'dark' ? 'light' : 'dark'} />
 
-      {/* Custom header — no stack header for this screen */}
+      {/* Custom header (headerShown: false in App.tsx, so we draw our own) */}
       <View
         style={[
           styles.headerBar,
@@ -130,7 +111,9 @@ export function ProfileScreen({ navigation }: Props) {
           },
         ]}
       >
-        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Profile</Text>
+        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+          Profile
+        </Text>
       </View>
 
       <ScrollView
@@ -138,53 +121,70 @@ export function ProfileScreen({ navigation }: Props) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Avatar + identity */}
-        <View style={[styles.identity, { backgroundColor: colors.bgElevated, borderColor: colors.border }]}>
+        {/* ── Identity block ── */}
+        <View
+          style={[
+            styles.identityBlock,
+            { backgroundColor: colors.bgElevated, borderBottomColor: colors.border },
+          ]}
+        >
           <View style={[styles.avatar, { backgroundColor: colors.iris }]}>
-            <Text style={styles.avatarInitial}>{initial}</Text>
+            <Text style={styles.avatarInitial}>{emailInitial(email)}</Text>
           </View>
           <View style={styles.identityText}>
-            <Text style={[styles.emailText, { color: colors.textPrimary }]} numberOfLines={1}>
+            <Text
+              style={[styles.emailText, { color: colors.textPrimary }]}
+              numberOfLines={1}
+            >
               {email ?? '—'}
             </Text>
             <Text style={[styles.userIdText, { color: colors.textTertiary }]}>
-              ID {shortId(userId)}
+              {shortId(userId)}
             </Text>
+            {!!memberSince && (
+              <Text style={[styles.memberSince, { color: colors.textTertiary }]}>
+                {memberSince}
+              </Text>
+            )}
           </View>
         </View>
 
-        {/* Settings section */}
-        <SectionHeader label="SETTINGS" textColor={colors.textTertiary} />
-        <View style={sectionBg}>
-          <SettingsRow
+        {/* ── Settings section ── */}
+        <SectionLabel label="SETTINGS" color={colors.textTertiary} />
+        <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
+          <NavRow
             label="Appearance"
             onPress={() => navigation.navigate('Settings')}
             textColor={colors.textPrimary}
             borderColor={colors.border}
-            detailColor={colors.textTertiary}
+            accentColor={colors.textTertiary}
           />
         </View>
 
-        {/* Account section */}
-        <SectionHeader label="ACCOUNT" textColor={colors.textTertiary} />
-        <View style={sectionBg}>
-          <SettingsRow
-            label={loading ? '' : 'Sign Out'}
-            onPress={loading ? undefined : handleSignOut}
-            destructive
-            textColor={colors.textPrimary}
-            borderColor={colors.border}
-            detailColor={colors.textTertiary}
-            detail={loading ? '' : undefined}
-          />
-          {loading && (
-            <View style={[styles.row, { borderBottomColor: colors.border }]}>
+        {/* ── Account section ── */}
+        <SectionLabel label="ACCOUNT" color={colors.textTertiary} />
+        <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
+          {/* Sign out — single row, inline spinner when in progress */}
+          <TouchableOpacity
+            style={styles.signOutRow}
+            onPress={handleSignOut}
+            disabled={signingOut}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+            accessibilityState={{ disabled: signingOut }}
+          >
+            {signingOut ? (
               <ActivityIndicator size="small" color={colors.iris} />
-            </View>
-          )}
+            ) : (
+              <Text style={[styles.signOutLabel, { color: colors.iris }]}>
+                Sign Out
+              </Text>
+            )}
+          </TouchableOpacity>
         </View>
 
-        <Text style={[styles.appVersion, { color: colors.textTertiary }]}>
+        <Text style={[styles.footerText, { color: colors.textTertiary }]}>
           IRIS · Intelligence Feed
         </Text>
       </ScrollView>
@@ -193,6 +193,8 @@ export function ProfileScreen({ navigation }: Props) {
     </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   screen: {
@@ -212,16 +214,16 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 
-  // ── Scroll ──
+  // ── Scroll content ──
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 16,
+    paddingBottom: 24,
   },
 
-  // ── Avatar / identity block ──
-  identity: {
+  // ── Identity block ──
+  identityBlock: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
@@ -230,22 +232,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   avatarInitial: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
     color: '#ffffff',
     letterSpacing: 0.3,
   },
   identityText: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   emailText: {
     fontSize: 15,
@@ -253,12 +255,15 @@ const styles = StyleSheet.create({
   },
   userIdText: {
     fontSize: 12,
-    fontFamily: undefined, // uses system monospace via letterSpacing
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
+  },
+  memberSince: {
+    fontSize: 11,
+    marginTop: 1,
   },
 
-  // ── Section grouping ──
-  sectionHeader: {
+  // ── Section label ──
+  sectionLabel: {
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.8,
@@ -267,11 +272,13 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     marginTop: 8,
   },
-  section: {
+
+  // ── Row groups ──
+  group: {
     marginBottom: 28,
   },
 
-  // ── Rows ──
+  // ── Nav row (with chevron) ──
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -283,11 +290,6 @@ const styles = StyleSheet.create({
   rowLabel: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '400',
-  },
-  rowDetail: {
-    fontSize: 14,
-    marginLeft: 8,
   },
   chevron: {
     fontSize: 20,
@@ -295,8 +297,20 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
 
-  // ── App version ──
-  appVersion: {
+  // ── Sign out row ── single row, always exactly one child (text OR spinner)
+  signOutRow: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    minHeight: 50,
+    justifyContent: 'center',
+  },
+  signOutLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+
+  // ── Footer ──
+  footerText: {
     fontSize: 12,
     textAlign: 'center',
     paddingHorizontal: 20,

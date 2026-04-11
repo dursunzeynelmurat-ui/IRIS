@@ -1,6 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { StatusBar } from 'expo-status-bar';
 import { useTheme, type ThemePreference } from '../context/ThemeContext';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -13,23 +12,27 @@ interface ThemeOption {
 }
 
 const THEME_OPTIONS: ThemeOption[] = [
-  { value: 'system', label: 'System',   description: 'Follows your device setting' },
-  { value: 'light',  label: 'Light',    description: 'Always use light appearance' },
-  { value: 'dark',   label: 'Dark',     description: 'Always use dark appearance' },
+  { value: 'system', label: 'System', description: 'Follows your device setting' },
+  { value: 'light',  label: 'Light',  description: 'Always use light appearance' },
+  { value: 'dark',   label: 'Dark',   description: 'Always use dark appearance' },
 ];
 
+// StatusBar is NOT rendered here — App.tsx already renders one StatusBar for
+// the entire NavigationContainer tree. Deep screens inherit that setting.
+
 export function SettingsScreen(_: Props) {
-  const { preference, setPreference, colors, resolved } = useTheme();
+  const { preference, setPreference, colors } = useTheme();
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
-      <StatusBar style={resolved === 'dark' ? 'light' : 'dark'} />
-
-      <Text style={[styles.sectionHeader, { color: colors.textTertiary }]}>
+      <Text style={[styles.sectionLabel, { color: colors.textTertiary }]}>
         APPEARANCE
       </Text>
 
-      <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
+      <View
+        style={[styles.group, { backgroundColor: colors.bgElevated }]}
+        accessibilityRole="radiogroup"
+      >
         {THEME_OPTIONS.map(({ value, label, description }, idx) => {
           const isSelected = preference === value;
           const isLast = idx === THEME_OPTIONS.length - 1;
@@ -39,7 +42,10 @@ export function SettingsScreen(_: Props) {
               key={value}
               style={[
                 styles.row,
-                !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+                !isLast && {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.border,
+                },
               ]}
               onPress={() => setPreference(value)}
               activeOpacity={0.7}
@@ -62,7 +68,6 @@ export function SettingsScreen(_: Props) {
                 )}
               </View>
 
-              {/* Labels */}
               <View style={styles.labelGroup}>
                 <Text style={[styles.optionLabel, { color: colors.textPrimary }]}>
                   {label}
@@ -85,7 +90,7 @@ const styles = StyleSheet.create({
     paddingTop: 20,
   },
 
-  sectionHeader: {
+  sectionLabel: {
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.8,

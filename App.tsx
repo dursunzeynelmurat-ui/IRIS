@@ -1,6 +1,7 @@
 import { DefaultTheme, DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
+import { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -15,40 +16,37 @@ import type { RootStackParamList } from './src/types/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-// Custom navigation themes with IRIS branding
-const IRIS_DARK = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    primary:    '#e5193e',
-    background: '#0d0d0d',
-    card:       '#0d0d0d',
-    text:       '#f2f2f2',
-    border:     '#2c2c2e',
-  },
-};
-
-const IRIS_LIGHT = {
-  ...DefaultTheme,
-  colors: {
-    ...DefaultTheme.colors,
-    primary:    '#c90f2e',
-    background: '#f2f2f7',
-    card:       '#ffffff',
-    text:       '#0d0d0d',
-    border:     '#c6c6c8',
-  },
-};
-
 /**
  * AppContent renders the auth-gated navigation tree.
  * It consumes auth state from AuthContext and theme from ThemeContext.
+ *
+ * The navigation theme is derived directly from ThemeContext color tokens —
+ * there is a single source of truth for color values. No static duplicate
+ * constants; changes to ThemeContext propagate automatically.
  */
 function AppContent() {
   const { userId, loading } = useAuth();
   const { resolved, colors } = useTheme();
 
-  const navTheme = resolved === 'dark' ? IRIS_DARK : IRIS_LIGHT;
+  // Navigation theme derived from ThemeContext — single source of truth.
+  // 'card' maps to the navigation header background:
+  //   dark  → colors.bg (#0d0d0d) — header blends with the screen background
+  //   light → colors.bgElevated (#ffffff) — white header over #f2f2f7 screen
+  const navTheme = useMemo(() => {
+    const base = resolved === 'dark' ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary:    colors.iris,
+        background: colors.bg,
+        card:       resolved === 'dark' ? colors.bg : colors.bgElevated,
+        text:       colors.textPrimary,
+        border:     colors.border,
+      },
+    };
+  }, [resolved, colors]);
+
   const statusStyle = resolved === 'dark' ? 'light' : 'dark';
 
   if (loading) {
@@ -75,9 +73,10 @@ function AppContent() {
   return (
     <ErrorBoundary>
       <NavigationContainer theme={navTheme}>
+        {/* Single StatusBar for the entire authenticated navigation tree. */}
         <StatusBar style={statusStyle} />
         <Stack.Navigator>
-          {/* ── Tab-level screens (no back button, custom tab bar rendered inside) ── */}
+          {/* ── Tab-level screens (custom BottomTabBar rendered inside each) ── */}
           <Stack.Screen
             name="EventList"
             component={EventListScreen}
@@ -97,16 +96,24 @@ function AppContent() {
             }}
           />
 
-          {/* ── Deep screens (standard stack navigation) ── */}
+          {/* ── Deep screens (standard stack push/pop navigation) ── */}
           <Stack.Screen
             name="EventDetail"
             component={EventDetailScreen}
-            options={{ title: 'Event Detail' }}
+            options={{
+              title: 'Event Detail',
+              headerBackTitle: '',       // iOS: suppress "IRIS" back-title text
+              headerShadowVisible: false,
+            }}
           />
           <Stack.Screen
             name="Settings"
             component={SettingsScreen}
-            options={{ title: 'Appearance' }}
+            options={{
+              title: 'Appearance',
+              headerBackTitle: '',
+              headerShadowVisible: false,
+            }}
           />
         </Stack.Navigator>
       </NavigationContainer>
@@ -116,7 +123,7 @@ function AppContent() {
 
 /**
  * App is the true root. AuthProvider and ThemeProvider live here so they
- * cover the entire component tree with a single subscription each.
+ * each cover the entire component tree with a single subscription.
  */
 export default function App() {
   return (
@@ -139,14 +146,14 @@ const styles = StyleSheet.create({
   splashWordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#e5193e',  // IRIS red on splash
+    color: '#e5193e',
     letterSpacing: 8,
   },
   splashSpinner: {
     marginTop: 28,
   },
 
-  // ── Navigation header ──
+  // ── Navigation header title ──
   navTitle: {
     fontSize: 18,
     fontWeight: '800',

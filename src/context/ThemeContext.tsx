@@ -22,14 +22,12 @@ export interface ThemeColors {
   textSecondary: string;
   textTertiary: string;
 
-  // Brand
+  // Brand accent — IRIS red.
+  // Future: when backend persistence is added, load the saved preference via
+  // an initialPreference prop on ThemeProvider and call setPreference() on mount.
+  // The color tokens here are the single source of truth for brand expression.
   iris: string;
-  irisSubtle: string; // low-opacity bg tint for iris accent
-
-  // Navigation / header
-  navBg: string;
-  navText: string;
-  navBorder: string;
+  irisSubtle: string;
 }
 
 // ── Color palettes ────────────────────────────────────────────
@@ -49,10 +47,6 @@ const DARK: ThemeColors = {
 
   iris:          '#e5193e',
   irisSubtle:    '#e5193e22',
-
-  navBg:         '#0d0d0d',
-  navText:       '#f2f2f2',
-  navBorder:     '#2c2c2e',
 };
 
 const LIGHT: ThemeColors = {
@@ -70,10 +64,6 @@ const LIGHT: ThemeColors = {
 
   iris:          '#c90f2e',
   irisSubtle:    '#c90f2e18',
-
-  navBg:         '#ffffff',
-  navText:       '#0d0d0d',
-  navBorder:     '#c6c6c8',
 };
 
 // ── Context ───────────────────────────────────────────────────
@@ -99,6 +89,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return systemScheme === 'light' ? 'light' : 'dark';
   }, [preference, systemScheme]);
 
+  // LIGHT and DARK are module-level constants (stable references).
+  // colors reference is therefore stable unless resolved changes.
   const colors = resolved === 'light' ? LIGHT : DARK;
 
   const handleSetPreference = useCallback((p: ThemePreference) => {

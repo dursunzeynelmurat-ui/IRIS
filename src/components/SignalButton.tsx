@@ -9,7 +9,10 @@ interface SignalButtonProps {
   disabled: boolean;
   /** Dim when the other signal type is active. */
   faded?: boolean;
-  /** 'default' — full-size for detail screen; 'compact' — small pill for feed cards. */
+  /**
+   * 'default' — full-width pill for the detail screen (flex: 1 from parent row).
+   * 'compact' — self-sized pill for feed cards (narrower padding, shorter height).
+   */
   size?: 'default' | 'compact';
   onPress: () => void;
 }
@@ -41,6 +44,8 @@ export function SignalButton({
       onPress={onPress}
       disabled={!!disabled}
       activeOpacity={0.8}
+      // Extend touch area on compact pills to meet iOS 44pt minimum.
+      hitSlop={isCompact ? { top: 8, bottom: 8, left: 6, right: 6 } : undefined}
       accessibilityRole="button"
       accessibilityLabel={`${label} event`}
       accessibilityState={{ selected: active, disabled: !!disabled }}
@@ -67,7 +72,7 @@ export function SignalButton({
 const styles = StyleSheet.create({
   btn: {
     borderWidth: 1,
-    borderRadius: 20, // pill shape
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -83,11 +88,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Compact variant (feed cards — fixed width, smaller padding)
+  // Compact variant (feed cards).
+  // Visual size is small (~32px tall) but hitSlop extends touch target to 44pt+.
   btnCompact: {
-    paddingVertical: 6,
+    paddingVertical: 7,
     paddingHorizontal: 14,
-    minHeight: 30,
+    minHeight: 32,
   },
   textCompact: {
     fontSize: 12,

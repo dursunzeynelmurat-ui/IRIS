@@ -7,9 +7,6 @@ import type { RootStackParamList } from '../types/navigation';
 
 type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
-// Tab height (excluding safe area — BottomTabBar adds insets.bottom internally).
-export const TAB_BAR_HEIGHT = 52;
-
 interface Tab {
   key: 'EventList' | 'Profile';
   label: string;
@@ -31,27 +28,29 @@ export function BottomTabBar() {
   const activeKey = route.name;
 
   function handlePress(key: Tab['key']) {
-    if (key === activeKey) return; // already on this tab
+    if (key === activeKey) return;
 
     if (key === 'EventList') {
-      // Reset the stack so Feed is always the root — gives clean tab-switch feel.
-      navigation.reset({ index: 0, routes: [{ name: 'EventList' }] });
+      // Profile is always at index 1 directly above EventList in the stack —
+      // goBack() is correct and preserves EventList scroll position.
+      // (Profile is only reachable via this tab bar, never from EventDetail.)
+      navigation.goBack();
     } else {
       navigation.navigate(key);
     }
   }
 
-  const containerStyle = [
-    styles.container,
-    {
-      paddingBottom: insets.bottom,
-      backgroundColor: colors.bgElevated,
-      borderTopColor: colors.border,
-    },
-  ] as const;
-
   return (
-    <View style={containerStyle}>
+    <View
+      style={[
+        styles.container,
+        {
+          paddingBottom: insets.bottom,
+          backgroundColor: colors.bgElevated,
+          borderTopColor: colors.border,
+        },
+      ]}
+    >
       {TABS.map(({ key, label, symbol, a11yLabel }) => {
         const isActive = activeKey === key;
         const tint = isActive ? colors.iris : colors.textTertiary;
@@ -66,11 +65,12 @@ export function BottomTabBar() {
             accessibilityLabel={a11yLabel}
             accessibilityState={{ selected: isActive }}
           >
-            <Text style={[styles.symbol, { color: tint }]}>{symbol}</Text>
-            <Text style={[styles.label, { color: tint }]}>{label}</Text>
+            {/* Top-edge active indicator stripe */}
             {isActive && (
               <View style={[styles.activeIndicator, { backgroundColor: colors.iris }]} />
             )}
+            <Text style={[styles.symbol, { color: tint }]}>{symbol}</Text>
+            <Text style={[styles.label, { color: tint }]}>{label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -82,7 +82,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
-    height: undefined, // height is content-driven + paddingBottom
   },
   tab: {
     flex: 1,
@@ -92,6 +91,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 3,
     position: 'relative',
+    minHeight: 52,
   },
   symbol: {
     fontSize: 18,

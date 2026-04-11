@@ -3,22 +3,25 @@ import { scoreColor } from '../lib/eventUtils';
 
 interface TrustRingProps {
   score: number;
-  /** 'sm' for cards (~38px), 'md' for detail screen (~52px). Default: 'sm'. */
+  /** 'sm' (~38px, for feed cards); 'md' (~52px, for detail screen). Default: 'sm'. */
   size?: 'sm' | 'md';
 }
 
 const SIZE_CONFIG = {
-  sm: { diameter: 38, strokeWidth: 3, fontSize: 11 },
+  sm: { diameter: 38, strokeWidth: 3,   fontSize: 11 },
   md: { diameter: 52, strokeWidth: 3.5, fontSize: 14 },
 };
 
 /**
  * Compact circular trust score indicator.
- * Renders as a color-coded ring (red/amber/green) with the numeric score inside.
- * Pure View-based — no SVG dependency required.
  *
- * Note: this uses a solid border ring (not a partial arc fill). The color alone
- * communicates the score tier; the exact value is shown as text in the center.
+ * Renders a color-coded ring (red/amber/green) around the numeric score.
+ * Pure View-based — no SVG dependency needed.
+ *
+ * The ring uses a solid colored border: the color communicates the tier
+ * (red < 34, amber 34–66, green ≥ 67) and the number shows the exact value.
+ * This is intentionally simpler than a partial-arc fill: legible at small sizes,
+ * unambiguous in all themes, and works without an SVG library.
  */
 export function TrustRing({ score, size = 'sm' }: TrustRingProps) {
   const { diameter, strokeWidth, fontSize } = SIZE_CONFIG[size];
@@ -38,7 +41,6 @@ export function TrustRing({ score, size = 'sm' }: TrustRingProps) {
         },
       ]}
       accessibilityLabel={`Trust score ${score} out of 100`}
-      accessibilityRole="text"
     >
       <Text style={[styles.score, { fontSize, color }]} numberOfLines={1}>
         {score}
