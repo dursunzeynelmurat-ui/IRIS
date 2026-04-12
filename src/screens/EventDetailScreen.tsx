@@ -25,7 +25,12 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
 // ── Sub-components ────────────────────────────────────────────
 
-function UpdateItem({ update, isLast, colors }: { update: EventUpdate; isLast: boolean; colors: ReturnType<typeof useTheme>['colors'] }) {
+function UpdateItem({ update, isLast, colors, resolved }: {
+  update: EventUpdate;
+  isLast: boolean;
+  colors: ReturnType<typeof useTheme>['colors'];
+  resolved: ReturnType<typeof useTheme>['resolved'];
+}) {
   const hasLink = !!update.source_url;
 
   function openLink() {
@@ -56,7 +61,7 @@ function UpdateItem({ update, isLast, colors }: { update: EventUpdate; isLast: b
             accessibilityRole="link"
             accessibilityLabel={`${update.source_name}, opens in browser`}
           >
-            <Text style={[styles.updateSource, styles.updateSourceLink]}>
+            <Text style={[styles.updateSource, { color: resolved === 'dark' ? '#0a84ff' : '#0060c7', textDecorationLine: 'underline' }]}>
               {update.source_name} ↗
             </Text>
           </TouchableOpacity>
@@ -80,9 +85,10 @@ interface SignalSectionProps {
   eventId: string;
   userId: string;
   colors: ReturnType<typeof useTheme>['colors'];
+  resolved: ReturnType<typeof useTheme>['resolved'];
 }
 
-function SignalSection({ eventId, userId, colors }: SignalSectionProps) {
+function SignalSection({ eventId, userId, colors, resolved: _resolved }: SignalSectionProps) {
   const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
@@ -118,7 +124,7 @@ function SignalSection({ eventId, userId, colors }: SignalSectionProps) {
         )}
       </View>
       {!fetchLoading && error && (
-        <Text style={styles.signalError}>{error}</Text>
+        <Text style={[styles.signalError, { color: colors.iris }]}>{error}</Text>
       )}
     </View>
   );
@@ -130,7 +136,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
   const { event, updates, loading, refreshing, error, refetch } = useEventDetail(eventId ?? '');
   const { userId } = useAuth();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
 
   // Dynamic header: event title only (sign out removed — lives in Profile)
   useEffect(() => {
@@ -189,6 +195,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
           update={item}
           isLast={index === updates.length - 1}
           colors={colors}
+          resolved={resolved}
         />
       )}
       contentContainerStyle={styles.list}
@@ -215,7 +222,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
           </View>
 
           {userId && (
-            <SignalSection eventId={event.id} userId={userId} colors={colors} />
+            <SignalSection eventId={event.id} userId={userId} colors={colors} resolved={resolved} />
           )}
 
           <Text
@@ -301,7 +308,7 @@ const styles = StyleSheet.create({
   signalError: {
     marginTop: 8,
     fontSize: 12,
-    color: '#e5193e',
+    // color set dynamically via colors.iris in JSX
   },
 
   // ── Section label ──
@@ -342,11 +349,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 4,
   },
-  updateSourceLink: {
-    color: '#0a84ff',
-    textDecorationLine: 'underline',
-  },
-  updateContent: {
+updateContent: {
     fontSize: 15,
     lineHeight: 22,
     marginBottom: 6,

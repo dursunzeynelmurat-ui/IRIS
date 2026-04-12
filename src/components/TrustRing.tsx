@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
 import { scoreColor } from '../lib/eventUtils';
 
 interface TrustRingProps {
@@ -20,12 +21,12 @@ const SIZE_CONFIG = {
  *
  * The ring uses a solid colored border: the color communicates the tier
  * (red < 34, amber 34–66, green ≥ 67) and the number shows the exact value.
- * This is intentionally simpler than a partial-arc fill: legible at small sizes,
- * unambiguous in all themes, and works without an SVG library.
+ * Both color and number are theme-aware (WCAG-compliant in light mode).
  */
 export function TrustRing({ score, size = 'sm' }: TrustRingProps) {
+  const { resolved } = useTheme();
   const { diameter, strokeWidth, fontSize } = SIZE_CONFIG[size];
-  const color = scoreColor(score);
+  const color = scoreColor(score, resolved);
   const borderRadius = diameter / 2;
 
   return (

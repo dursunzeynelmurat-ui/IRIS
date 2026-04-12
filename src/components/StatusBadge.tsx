@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { STATUS_COLOR, STATUS_LABEL } from '../lib/eventUtils';
+import { useTheme } from '../context/ThemeContext';
+import { statusColors, STATUS_LABEL } from '../lib/eventUtils';
 import { EventStatus } from '../types';
 
 interface StatusBadgeProps {
@@ -7,7 +8,8 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
-  const color = STATUS_COLOR[status];
+  const { resolved } = useTheme();
+  const color = statusColors(resolved)[status];
   return (
     <View style={[styles.badge, { borderColor: color, backgroundColor: color + '18' }]}>
       <Text style={[styles.text, { color }]}>

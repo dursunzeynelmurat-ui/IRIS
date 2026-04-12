@@ -1,4 +1,5 @@
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
 import { SignalType } from '../types';
 
 interface SignalButtonProps {
@@ -26,10 +27,15 @@ export function SignalButton({
   size = 'default',
   onPress,
 }: SignalButtonProps) {
-  const accentColor = type === 'confirm' ? '#30d158' : '#e5193e';
-  const label       = type === 'confirm' ? 'Confirm' : 'Dispute';
-  const icon        = type === 'confirm' ? '✓' : '✕';
+  const { resolved, colors } = useTheme();
 
+  // Confirm: green — WCAG-compliant in both themes.
+  // Dispute: IRIS red — brand color, theme-aware.
+  const confirmColor = resolved === 'dark' ? '#30d158' : '#1e7a30';
+  const accentColor  = type === 'confirm' ? confirmColor : colors.iris;
+
+  const label    = type === 'confirm' ? 'Confirm' : 'Dispute';
+  const icon     = type === 'confirm' ? '✓' : '✕';
   const isCompact = size === 'compact';
 
   return (
