@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–018) to confirm expected state.
+-- Run after applying all migrations (001–021) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -16,7 +16,7 @@ SELECT
 FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relkind = 'r'
-  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
+  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
 ORDER BY relname;
 
 -- ── Section 2: All policies on core tables (informational) ────────────────
@@ -605,6 +605,170 @@ WHERE n.nspname  = 'public'
   AND cl.relname = 'user_preferences'
   AND c.contype  = 'f';
 
+-- ── Section 16: event_follows table exists with correct columns ───────────
+
+SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  column_default,
+  CASE
+    WHEN column_name = 'user_id'    AND data_type = 'uuid'                          THEN 'PASS'
+    WHEN column_name = 'event_id'   AND data_type = 'uuid'                          THEN 'PASS'
+    WHEN column_name = 'created_at' AND data_type = 'timestamp with time zone'      THEN 'PASS'
+    ELSE 'FAIL ← unexpected column or type'
+  END AS status
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'event_follows'
+ORDER BY ordinal_position;
+
+-- ── Section 17: follow_count column on events ─────────────────────────────
+
+SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  column_default,
+  CASE
+    WHEN column_name = 'follow_count'
+      AND data_type = 'integer'
+      AND is_nullable = 'NO'
+      THEN 'PASS'
+    ELSE 'FAIL ← follow_count column missing, wrong type, or nullable'
+  END AS status
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'events'
+  AND column_name  = 'follow_count';
+
+-- ── Section 18: RLS policies on event_follows ────────────────────────────
+
+SELECT
+  policyname,
+  cmd,
+  roles,
+  CASE WHEN permissive = 'PERMISSIVE' THEN 'permissive' ELSE 'RESTRICTIVE' END AS type,
+  CASE
+    WHEN policyname = 'deny_follows_anon'   AND permissive = 'RESTRICTIVE' THEN 'PASS'
+    WHEN policyname = 'deny_follows_update' AND permissive = 'RESTRICTIVE' THEN 'PASS'
+    WHEN policyname = 'follows_read_own'    AND permissive = 'PERMISSIVE'  THEN 'PASS'
+    WHEN policyname = 'follows_insert_own'  AND permissive = 'PERMISSIVE'  THEN 'PASS'
+    WHEN policyname = 'follows_delete_own'  AND permissive = 'PERMISSIVE'  THEN 'PASS'
+    ELSE 'FAIL ← unexpected policy configuration'
+  END AS status
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'event_follows'
+ORDER BY policyname;
+
+-- ── Section 19: sync_follow_count trigger ────────────────────────────────
+
+SELECT
+  trigger_name,
+  event_manipulation,
+  action_timing,
+  action_orientation,
+  CASE
+    WHEN trigger_name      = 'trg_sync_follow_count'
+      AND action_timing    = 'AFTER'
+      AND action_orientation = 'ROW'
+      THEN 'PASS'
+    ELSE 'FAIL ← trigger missing or misconfigured'
+  END AS status
+FROM information_schema.triggers
+WHERE trigger_schema = 'public'
+  AND event_object_table = 'event_follows'
+  AND trigger_name = 'trg_sync_follow_count';
+
+-- ── Section 20: toggle_event_follow function ──────────────────────────────
+
+SELECT
+  p.proname                                     AS function_name,
+  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  CASE
+    WHEN p.proname = 'toggle_event_follow' AND p.prosecdef = true THEN 'PASS'
+    ELSE 'FAIL ← function missing or not SECURITY DEFINER'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname  = 'public'
+  AND p.proname  = 'toggle_event_follow';
+
+-- ── Section 21: GIN indexes for full-text search ──────────────────────────
+
+SELECT
+  indexname,
+  tablename,
+  indexdef,
+  CASE
+    WHEN indexname IN ('idx_events_fts', 'idx_event_updates_fts') THEN 'PASS'
+    ELSE 'FAIL ← FTS index missing'
+  END AS status
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN ('idx_events_fts', 'idx_event_updates_fts')
+ORDER BY indexname;
+
+-- ── Section 22: search_events and search_event_updates functions ──────────
+
+SELECT
+  p.proname                                     AS function_name,
+  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  CASE
+    WHEN p.proname IN ('search_events', 'search_event_updates')
+      AND p.prosecdef = false
+      THEN 'PASS'
+    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN ('search_events', 'search_event_updates')
+ORDER BY p.proname;
+
+-- ── Section 23: get_rising_events function ────────────────────────────────
+
+SELECT
+  p.proname                                     AS function_name,
+  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  CASE
+    WHEN p.proname = 'get_rising_events' AND p.prosecdef = false THEN 'PASS'
+    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'get_rising_events';
+
+-- ── Section 24: FK cascade rules on event_follows ────────────────────────
+
+SELECT
+  c.conname AS constraint_name,
+  CASE c.confdeltype
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  n_ref.nspname || '.' || cl_ref.relname AS referenced_table,
+  CASE
+    WHEN c.confdeltype = 'c'
+      THEN 'PASS'
+    ELSE 'FAIL ← delete_rule is not CASCADE: ' || c.confdeltype::text
+  END AS status
+FROM pg_constraint c
+JOIN pg_class cl         ON cl.oid  = c.conrelid
+JOIN pg_namespace n      ON n.oid   = cl.relnamespace
+JOIN pg_class cl_ref     ON cl_ref.oid = c.confrelid
+JOIN pg_namespace n_ref  ON n_ref.oid  = cl_ref.relnamespace
+WHERE n.nspname  = 'public'
+  AND cl.relname = 'event_follows'
+  AND c.contype  = 'f'
+ORDER BY c.conname;
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–018 are applied.
+-- All rows should show 'PASS' after migrations 001–021 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
