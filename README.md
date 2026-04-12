@@ -260,7 +260,8 @@ supabase/
 │   ├── 018_user_preferences.sql
 │   ├── 019_event_follows.sql
 │   ├── 020_get_rising_events.sql
-│   └── 021_search_events.sql
+│   ├── 021_search_events.sql
+│   └── 022_fts_search_updates.sql
 ├── ingestion/                     # V1 ingestion pipeline (adapter → normalize → write)
 │   ├── types.ts                   # RawSourceItem, NormalizedEvent, SourceAdapter, IngestionResult
 │   ├── client.ts                  # createIngestionClient() — service_role Supabase client
@@ -542,6 +543,16 @@ Calls `search_events(p_query, p_limit)` RPC. Returns `{ results, searching, erro
 - **Known limitation**: leading-wildcard ILIKE requires sequential scan for content matches. Acceptable at MVP event counts; pg_trgm or tsvector needed for scale.
 - **Security**: SECURITY INVOKER; same events + event_updates RLS visibility as direct table queries.
 
+### Full-Text Search — `search_event_updates(query)` (migration 022)
+
+GIN-indexed full-text search over `event_updates.content` and `source_name` via `websearch_to_tsquery`. SECURITY INVOKER, STABLE.
+
+- GIN index `idx_event_updates_fts` on `to_tsvector(content || source_name)` — no sequential scan needed
+- GIN index `idx_events_fts` on `to_tsvector(title)` — for future title FTS queries
+- `websearch_to_tsquery`: handles unbalanced quotes, boolean operators, stop words safely
+- Ranked by `ts_rank`, then `created_at DESC`
+- Additive on top of 021's ILIKE `search_events` — both approaches coexist; callers choose based on query complexity
+
 ---
 
 ## 15. UI Structure
@@ -670,6 +681,7 @@ supabase/migrations/018_user_preferences.sql
 supabase/migrations/019_event_follows.sql
 supabase/migrations/020_get_rising_events.sql
 supabase/migrations/021_search_events.sql
+supabase/migrations/022_fts_search_updates.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -765,13 +777,14 @@ npx expo start
   - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores`, `compute_trust_score` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–016)
   - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–016)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, signal permissive policy ownership, user_preferences table integrity, event_follows table integrity, and public RPC accessibility (001–021)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, signal permissive policy ownership, user_preferences table integrity, event_follows table integrity, public RPC accessibility, GIN FTS index presence, and search_event_updates function (001–022)
 - User preferences backend (migration 018): `user_preferences` table — theme preference (`system` | `light` | `dark`), auto-created on signup via `handle_new_user` trigger, RLS own-row read/update, RESTRICTIVE anon deny + RESTRICTIVE delete deny; `useUserPreferences(userId)` hook — fetch + optimistic upsert + revert on failure
 - Theme preference applied to the navigation chrome: `ThemeContext` (`src/context/ThemeContext.tsx`) resolves `user_preferences.theme` using `useColorScheme()` for `'system'`; `navTheme` wired into `<NavigationContainer>` so headers/tabs adapt; `StatusBar` style reactive to resolved scheme
 - Settings screen (`src/screens/SettingsScreen.tsx`): theme picker (System / Light / Dark) with radio-style selection; Account section with Sign Out; styles adapt to resolved scheme so the screen remains legible after a theme change; accessible via ⚙ icon in EventList header
 - Event follows backend (migration 019): `event_follows` table (composite PK, both FKs CASCADE), `events.follow_count` denormalized counter maintained by `sync_follow_count` SECURITY DEFINER trigger; RLS own-row read/insert/delete; RESTRICTIVE anon deny + RESTRICTIVE update deny; `useEventFollow(eventId, userId)` hook — fetch + optimistic toggle with revert
 - Rising feed RPC (migration 020): `get_rising_events(p_limit)` — SECURITY INVOKER, STABLE; emerging+developing only; ranking: `(follow_count × 10) + status_bonus + (trust_score ÷ 10)`; follow_count dominates; `idx_events_follow_count DESC` index; `useRisingEvents(limit)` hook
 - Search RPC (migration 021): `search_events(p_query, p_limit)` — SECURITY INVOKER, STABLE; title ILIKE + EXISTS content/source_name match; ranked by title-match bucket then created_at DESC; 2-char minimum; `idx_events_title_lower` functional index; `useSearch(debounceMs)` hook — debounced 300ms, per-closure cancellation (stale responses discarded)
+- GIN full-text search indexes + `search_event_updates` RPC (migration 022): `idx_events_fts` and `idx_event_updates_fts` GIN indexes on `to_tsvector` for events.title and event_updates content/source_name; `search_event_updates(query)` SECURITY INVOKER RPC uses `websearch_to_tsquery` for multi-word and boolean queries, ranked by `ts_rank`; additive on top of 021's ILIKE approach
 
 ### Not Implemented
 

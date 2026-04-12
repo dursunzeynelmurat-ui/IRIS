@@ -12,7 +12,7 @@ interface UseSearchResult {
 }
 
 /**
- * Debounced event search via the search_events RPC.
+ * Debounced event search via the search_events RPC (migration 021).
  *
  * - Fires when query length ≥ 2 (server enforces the same minimum)
  * - Clears results immediately when query drops below 2 chars
@@ -27,10 +27,10 @@ interface UseSearchResult {
  */
 export function useSearch(debounceMs = 300): UseSearchResult {
   const [query, setQueryState] = useState('');
-  const [results, setResults] = useState<Event[]>([]);
+  const [results, setResults]  = useState<Event[]>([]);
   const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError]         = useState<string | null>(null);
+  const timerRef                  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);

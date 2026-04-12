@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–021) to confirm expected state.
+-- Run after applying all migrations (001–022) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -614,6 +614,7 @@ WHERE n.nspname  = 'public'
   AND cl.relname = 'user_preferences'
   AND c.contype  = 'f';
 
+
 -- ── Section 17: event_follows table (migration 019) ──────────────────────
 --
 -- Comprehensive verification of the event_follows table and its counter
@@ -671,7 +672,7 @@ WHERE n.nspname = 'public' AND cl.relname = 'events';
 --
 -- follows_read_own:   USING must contain user_id
 -- follows_insert_own: WITH CHECK must contain user_id
--- follows_delete_own: USING must contain user_id (permissive DELETE is intentional)
+-- follows_delete_own: USING must contain user_id
 
 WITH expected_follows_policies AS (
   SELECT * FROM (VALUES
@@ -730,11 +731,6 @@ WHERE n.nspname  = 'public'
 ORDER BY referenced_table;
 
 -- ── Part E: sync_follow_count is SECURITY DEFINER ────────────────────────
---
--- Section 4 covers all SECURITY DEFINER functions. This part provides a
--- focused pass/fail for sync_follow_count specifically in context of this
--- section (so a reader reviewing Section 17 gets the full picture without
--- scrolling back to Section 4).
 
 SELECT
   p.proname AS "function",
@@ -766,15 +762,17 @@ WHERE schemaname = 'public'
   AND permissive = 'PERMISSIVE'
 ORDER BY policyname;
 
--- ── Section 18: Public RPC accessibility (migrations 020, 021) ───────────
+-- ── Section 18: Public RPC accessibility (migrations 019, 020, 021) ───────
 --
--- get_rising_events and search_events are SECURITY INVOKER (default) public
--- read functions. Both anon and authenticated roles must be able to call them.
--- (Unlike internal functions which are explicitly revoked in Section 7.)
+-- toggle_event_follow is SECURITY DEFINER — only authenticated can call it
+--   (anon is rejected by the auth.uid() IS NULL check inside the function).
+-- get_rising_events and search_events are SECURITY INVOKER public read
+--   functions — both anon and authenticated must be able to call them.
 
 WITH rpc_checks AS (
-  SELECT 'get_rising_events(integer)'  AS fn UNION ALL
-  SELECT 'search_events(text,integer)'
+  SELECT 'toggle_event_follow(uuid)'   AS fn, false AS anon_allowed UNION ALL
+  SELECT 'get_rising_events(integer)'  AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_events(text,integer)' AS fn, true  AS anon_allowed
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -783,6 +781,8 @@ SELECT
   c.fn,
   r.rolname AS "role",
   CASE
+    WHEN r.rolname = 'anon' AND NOT c.anon_allowed
+      THEN 'SKIP — anon not expected to have execute (function enforces auth internally)'
     WHEN has_function_privilege(r.rolname, 'public.' || c.fn, 'execute')
       THEN 'PASS — can execute'
     ELSE 'FAIL ← role cannot execute (check GRANT on function)'
@@ -790,6 +790,34 @@ SELECT
 FROM rpc_checks c CROSS JOIN roles r
 ORDER BY c.fn, r.rolname;
 
+-- ── Section 19: GIN FTS indexes (migration 022) ───────────────────────────
+
+SELECT
+  indexname,
+  tablename,
+  CASE
+    WHEN indexname IN ('idx_events_fts', 'idx_event_updates_fts') THEN 'PASS'
+    ELSE 'FAIL ← FTS GIN index missing (apply migration 022)'
+  END AS status
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN ('idx_events_fts', 'idx_event_updates_fts')
+ORDER BY indexname;
+
+-- ── Section 20: search_event_updates function (migration 022) ─────────────
+
+SELECT
+  p.proname AS function_name,
+  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  CASE
+    WHEN p.proname = 'search_event_updates' AND p.prosecdef = false THEN 'PASS'
+    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER (apply migration 022)'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'search_event_updates';
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–021 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–022 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
