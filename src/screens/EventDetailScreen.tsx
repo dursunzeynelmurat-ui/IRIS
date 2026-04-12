@@ -25,12 +25,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 
 // ── Sub-components ────────────────────────────────────────────
 
-function UpdateItem({ update, isLast, colors, resolved }: {
-  update: EventUpdate;
-  isLast: boolean;
-  colors: ReturnType<typeof useTheme>['colors'];
-  resolved: ReturnType<typeof useTheme>['resolved'];
-}) {
+function UpdateItem({ update, isLast }: { update: EventUpdate; isLast: boolean }) {
+  const { colors, resolved } = useTheme();
   const hasLink = !!update.source_url;
 
   function openLink() {
@@ -81,14 +77,8 @@ function UpdateItem({ update, isLast, colors, resolved }: {
   );
 }
 
-interface SignalSectionProps {
-  eventId: string;
-  userId: string;
-  colors: ReturnType<typeof useTheme>['colors'];
-  resolved: ReturnType<typeof useTheme>['resolved'];
-}
-
-function SignalSection({ eventId, userId, colors, resolved: _resolved }: SignalSectionProps) {
+function SignalSection({ eventId, userId }: { eventId: string; userId: string }) {
+  const { colors } = useTheme();
   const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
     userId,
@@ -194,8 +184,6 @@ export function EventDetailScreen({ route, navigation }: Props) {
         <UpdateItem
           update={item}
           isLast={index === updates.length - 1}
-          colors={colors}
-          resolved={resolved}
         />
       )}
       contentContainerStyle={styles.list}
@@ -222,7 +210,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
           </View>
 
           {userId && (
-            <SignalSection eventId={event.id} userId={userId} colors={colors} resolved={resolved} />
+            <SignalSection eventId={event.id} userId={userId} />
           )}
 
           <Text

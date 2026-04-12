@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,7 +15,9 @@ import { BottomTabBar } from '../components/BottomTabBar';
 import { EventCard } from '../components/EventCard';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
+import { useEventSearch } from '../hooks/useEventSearch';
 import { useEvents } from '../hooks/useEvents';
+import { useRisingEvents } from '../hooks/useRisingEvents';
 import { useUserSignals } from '../hooks/useUserSignals';
 import { Event } from '../types';
 import type { RootStackParamList } from '../types/navigation';
@@ -39,7 +41,7 @@ const TABS: Tab[] = [
 
 // ── Tab filtering logic ───────────────────────────────────────
 
-function filterByTab(events: Event[], tab: FeedTab): Event[] {
+function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] {
   switch (tab) {
     case 'new':
       return [...events].sort(
@@ -47,23 +49,7 @@ function filterByTab(events: Event[], tab: FeedTab): Event[] {
       );
     case 'verified':
       return events.filter((e) => e.status === 'verified');
-    case 'rising':
-      // Developing stories gaining credibility — not yet verified.
-      return events
-        .filter((e) => e.status === 'emerging' || e.status === 'developing')
-        .sort((a, b) => (b.trust_score ?? 0) - (a.trust_score ?? 0));
   }
-}
-
-// ── Client-side search ────────────────────────────────────────
-// Case-insensitive substring match on title.
-// Covers the common "I remember seeing something about X" retrieval pattern.
-// When backend search lands (migration 021) this can swap to an RPC call.
-
-function searchEvents(events: Event[], query: string): Event[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return events;
-  return events.filter((e) => e.title.toLowerCase().includes(q));
 }
 
 // ── Empty state messages ──────────────────────────────────────
@@ -94,35 +80,30 @@ export function EventListScreen({ navigation }: Props) {
   const { events, loading, refreshing, error, refetch } = useEvents();
   const { userId } = useAuth();
   const { signalMap, setSignal } = useUserSignals(userId);
-  const { colors, resolved } = useTheme();
+  const { colors } = useTheme();
 
-  const [activeTab, setActiveTab]   = useState<FeedTab>('new');
-  const [searchQuery, setSearchQuery] = useState('');
-  const searchInputRef = useRef<TextInput>(null);
+  const [activeTab, setActiveTab] = useState<FeedTab>('new');
 
-  const isSearching = searchQuery.trim().length > 0;
+  const { query: searchQuery, setQuery: setSearchQuery, results: searchResults, isSearching, clearQuery: clearSearch } = useEventSearch(events);
+  const { events: risingEvents } = useRisingEvents(events);
 
   // When searching, show matching events from the entire corpus, newest first.
   // When not searching, apply the active tab's filter.
-  const displayed = useMemo(() => {
-    if (isSearching) {
-      const matched = searchEvents(events, searchQuery);
-      return [...matched].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-    }
-    return filterByTab(events, activeTab);
-  }, [events, activeTab, searchQuery, isSearching]);
+  const displayed = isSearching
+    ? searchResults
+    : activeTab === 'rising'
+      ? risingEvents
+      : filterByTab(events, activeTab);
 
-  function clearSearch() {
-    setSearchQuery('');
+  function handleClearSearch() {
+    clearSearch();
     Keyboard.dismiss();
   }
 
   function handleTabPress(key: FeedTab) {
     if (isSearching) {
       // Tapping a tab while searching clears the search and switches tab.
-      clearSearch();
+      handleClearSearch();
     }
     setActiveTab(key);
   }
@@ -155,9 +136,7 @@ export function EventListScreen({ navigation }: Props) {
   }
 
   // ── Search bar color tokens ────────────────────────────────────
-  // Subtle appearance: same bg as the screen, border for definition.
-  // Active: border brightens to borderStrong; tint changes to iris.
-  const inputBg     = resolved === 'dark' ? colors.bgElevated : colors.bgInput;
+  // bgInput resolves to bgElevated in dark and white in light — both themes handled.
   const inputBorder = isSearching ? colors.iris + '60' : colors.border;
 
   return (
@@ -169,7 +148,7 @@ export function EventListScreen({ navigation }: Props) {
           style={[
             styles.searchInputWrapper,
             {
-              backgroundColor: inputBg,
+              backgroundColor: colors.bgInput,
               borderColor: inputBorder,
             },
           ]}
@@ -177,7 +156,6 @@ export function EventListScreen({ navigation }: Props) {
           {/* Lens icon — Unicode, no native dependency */}
           <Text style={[styles.searchIcon, { color: colors.textTertiary }]}>⌕</Text>
           <TextInput
-            ref={searchInputRef}
             style={[styles.searchInput, { color: colors.textPrimary }]}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -192,7 +170,7 @@ export function EventListScreen({ navigation }: Props) {
           />
           {isSearching && (
             <TouchableOpacity
-              onPress={clearSearch}
+              onPress={handleClearSearch}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
               accessibilityLabel="Clear search"

@@ -128,6 +128,15 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
+      {/*
+        Integration: wire backend persistence by passing optional props:
+          <ThemeProvider
+            savedPreference={userPrefs?.theme}
+            onSavePreference={updateTheme}
+          >
+        where userPrefs and updateTheme come from a useUserPreferences() hook
+        that reads/writes the user_preferences table via Supabase.
+      */}
       <ThemeProvider>
         <AppContent />
       </ThemeProvider>

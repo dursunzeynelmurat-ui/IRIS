@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -23,8 +23,6 @@ export interface ThemeColors {
   textTertiary: string;
 
   // Brand accent — IRIS red.
-  // Future: when backend persistence is added, load the saved preference via
-  // an initialPreference prop on ThemeProvider and call setPreference() on mount.
   // The color tokens here are the single source of truth for brand expression.
   iris: string;
   irisSubtle: string;
@@ -79,9 +77,34 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 // ── Provider ──────────────────────────────────────────────────
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+interface ThemeProviderProps {
+  children: ReactNode;
+  /**
+   * Backend-persisted preference. When provided, the provider syncs to it on
+   * mount and whenever it changes (e.g. after a successful preferences fetch).
+   *
+   * Integration: pass `userPrefs?.theme` from a useUserPreferences() hook.
+   */
+  savedPreference?: ThemePreference;
+  /**
+   * Called whenever the user selects a new preference. The provider applies
+   * the change optimistically and reverts on failure.
+   *
+   * Integration: pass `updateTheme` from a useUserPreferences() hook.
+   */
+  onSavePreference?: (p: ThemePreference) => Promise<void>;
+}
+
+export function ThemeProvider({ children, savedPreference, onSavePreference }: ThemeProviderProps) {
   const systemScheme = useColorScheme(); // 'light' | 'dark' | null
-  const [preference, setPreference] = useState<ThemePreference>('system');
+  const [preference, setPreferenceState] = useState<ThemePreference>(savedPreference ?? 'system');
+
+  // Sync to backend-loaded preference whenever it arrives or changes.
+  useEffect(() => {
+    if (savedPreference !== undefined) {
+      setPreferenceState(savedPreference);
+    }
+  }, [savedPreference]);
 
   const resolved: ResolvedTheme = useMemo(() => {
     if (preference === 'light') return 'light';
@@ -93,13 +116,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // colors reference is therefore stable unless resolved changes.
   const colors = resolved === 'light' ? LIGHT : DARK;
 
-  const handleSetPreference = useCallback((p: ThemePreference) => {
-    setPreference(p);
-  }, []);
+  const setPreference = useCallback((p: ThemePreference) => {
+    const previous = preference;
+    setPreferenceState(p);
+    if (onSavePreference) {
+      // Optimistic update — revert on backend failure.
+      onSavePreference(p).catch(() => {
+        setPreferenceState(previous);
+      });
+    }
+  }, [preference, onSavePreference]);
 
   const value = useMemo(
-    () => ({ preference, resolved, colors, setPreference: handleSetPreference }),
-    [preference, resolved, colors, handleSetPreference],
+    () => ({ preference, resolved, colors, setPreference }),
+    [preference, resolved, colors, setPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
