@@ -14,6 +14,14 @@ export interface Event {
   status: EventStatus;
   trust_score: number; // 0–100
   source_count: number;
+  follow_count: number; // denormalized; kept in sync by sync_follow_count trigger
+  created_at: string;
+}
+
+// public.event_follows
+export interface EventFollow {
+  user_id: string;
+  event_id: string;
   created_at: string;
 }
 

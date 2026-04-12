@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–018) to confirm expected state.
+-- Run after applying all migrations (001–021) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -16,7 +16,7 @@ SELECT
 FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relkind = 'r'
-  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
+  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
 ORDER BY relname;
 
 -- ── Section 2: All policies on core tables (informational) ────────────────
@@ -31,13 +31,13 @@ SELECT
   with_check
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
+  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
 ORDER BY tablename, policyname;
 
--- ── Section 3: RESTRICTIVE deny policies — all 14 required ──────────────
+-- ── Section 3: RESTRICTIVE deny policies — all 16 required ──────────────
 --
--- After migrations 004, 005, 007, 010, 018 the following RESTRICTIVE policies
--- must exist. Any missing row = FAIL.
+-- After migrations 004, 005, 007, 010, 018, 019 the following RESTRICTIVE
+-- policies must exist. Any missing row = FAIL.
 
 WITH expected_restrictive AS (
   SELECT * FROM (VALUES
@@ -59,7 +59,10 @@ WITH expected_restrictive AS (
     ('users',             'deny_users_anon'),
     -- migration 018
     ('user_preferences',  'deny_prefs_anon'),
-    ('user_preferences',  'deny_prefs_delete')
+    ('user_preferences',  'deny_prefs_delete'),
+    -- migration 019
+    ('event_follows',     'deny_follows_anon'),
+    ('event_follows',     'deny_follows_update')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -102,7 +105,8 @@ WHERE n.nspname = 'public'
     'ingest_event',
     'reconcile_source_counts',   -- migration 015
     'reconcile_trust_scores',    -- migration 015
-    'compute_trust_score'        -- migration 016
+    'compute_trust_score',       -- migration 016
+    'sync_follow_count'          -- migration 019
   )
 ORDER BY p.proname;
 
@@ -130,7 +134,8 @@ WHERE n.nspname = 'public'
   AND t.tgname IN (
     'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE OR DELETE on signals (migrations 006, 013)
     'trg_sync_source_count',              -- AFTER INSERT OR DELETE on event_updates (migration 003)
-    'signals_enforce_immutable_fields'    -- BEFORE UPDATE on signals (migration 009)
+    'signals_enforce_immutable_fields',   -- BEFORE UPDATE on signals (migration 009)
+    'trg_sync_follow_count'               -- AFTER INSERT OR DELETE on event_follows (migration 019)
   )
 ORDER BY c.relname, t.tgname;
 
@@ -252,7 +257,9 @@ WITH deny_policies AS (
     ('signals',           'deny_signals_anon'),
     ('users',             'deny_users_anon'),
     ('user_preferences',  'deny_prefs_anon'),
-    ('user_preferences',  'deny_prefs_delete')
+    ('user_preferences',  'deny_prefs_delete'),
+    ('event_follows',     'deny_follows_anon'),
+    ('event_follows',     'deny_follows_update')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -345,7 +352,9 @@ WITH expected_triggers AS (
     ('signals',       'signals_sync_trust_score',         29,
      'AFTER INSERT OR UPDATE OR DELETE — must cover DELETE for user account cascade'),
     ('event_updates', 'trg_sync_source_count',            13,
-     'AFTER INSERT OR DELETE')
+     'AFTER INSERT OR DELETE'),
+    ('event_follows', 'trg_sync_follow_count',            13,
+     'AFTER INSERT OR DELETE — keeps follow_count denormalized counter in sync')
   ) AS t(tbl, trig, expected_tgtype, description)
 )
 SELECT
@@ -605,6 +614,182 @@ WHERE n.nspname  = 'public'
   AND cl.relname = 'user_preferences'
   AND c.contype  = 'f';
 
+-- ── Section 17: event_follows table (migration 019) ──────────────────────
+--
+-- Comprehensive verification of the event_follows table and its counter
+-- mechanism on events.follow_count.
+--
+-- RLS enablement   → Section 1 (included there)
+-- RESTRICTIVE deny → Sections 3 + 11 (deny_follows_anon, deny_follows_update)
+-- Trigger timing   → Section 13 (trg_sync_follow_count, tgtype=13)
+
+-- ── Part A: Table + column existence ─────────────────────────────────────
+
+SELECT
+  cl.relname AS table_name,
+  CASE WHEN cl.oid IS NOT NULL THEN 'PASS — table exists'
+       ELSE 'FAIL ← event_follows table missing (apply migration 019)' END AS table_status,
+  (
+    SELECT COUNT(*) FROM pg_attribute a
+    WHERE a.attrelid = cl.oid
+      AND a.attname IN ('user_id', 'event_id', 'created_at')
+      AND NOT a.attisdropped
+  ) AS expected_columns_found,
+  CASE
+    WHEN cl.oid IS NULL
+      THEN 'FAIL ← table missing'
+    WHEN (
+      SELECT COUNT(*) FROM pg_attribute a
+      WHERE a.attrelid = cl.oid
+        AND a.attname IN ('user_id', 'event_id', 'created_at')
+        AND NOT a.attisdropped
+    ) < 3
+      THEN 'FAIL ← one or more expected columns (user_id, event_id, created_at) not found'
+    ELSE 'PASS — all 3 expected columns present'
+  END AS column_status
+FROM pg_namespace n
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = n.oid AND cl.relname = 'event_follows' AND cl.relkind = 'r'
+WHERE n.nspname = 'public';
+
+-- ── Part B: follow_count column on events ─────────────────────────────────
+
+SELECT
+  a.attname AS column_name,
+  CASE
+    WHEN a.attnum IS NULL
+      THEN 'FAIL ← follow_count column missing from events (apply migration 019)'
+    ELSE 'PASS'
+  END AS status
+FROM pg_class cl
+JOIN pg_namespace n ON n.oid = cl.relnamespace
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = 'follow_count' AND NOT a.attisdropped
+WHERE n.nspname = 'public' AND cl.relname = 'events';
+
+-- ── Part C: Permissive policy ownership expressions ───────────────────────
+--
+-- follows_read_own:   USING must contain user_id
+-- follows_insert_own: WITH CHECK must contain user_id
+-- follows_delete_own: USING must contain user_id (permissive DELETE is intentional)
+
+WITH expected_follows_policies AS (
+  SELECT * FROM (VALUES
+    ('follows_read_own',   'SELECT', 'auth.uid() = user_id', NULL::text),
+    ('follows_insert_own', 'INSERT', NULL::text,             'auth.uid() = user_id'),
+    ('follows_delete_own', 'DELETE', 'auth.uid() = user_id', NULL::text)
+  ) AS t(polname, cmd, required_qual_fragment, required_check_fragment)
+)
+SELECT
+  e.polname    AS "policy",
+  e.cmd,
+  p.qual        AS "using_expr",
+  p.with_check  AS "with_check_expr",
+  CASE
+    WHEN p.policyname IS NULL
+      THEN 'FAIL ← policy missing (apply migration 019)'
+    WHEN e.required_qual_fragment IS NOT NULL
+      AND (p.qual IS NULL OR p.qual NOT LIKE '%user_id%')
+      THEN 'FAIL ← USING clause missing or lacks user_id ownership check'
+    WHEN e.required_check_fragment IS NOT NULL
+      AND (p.with_check IS NULL OR p.with_check NOT LIKE '%user_id%')
+      THEN 'FAIL ← WITH CHECK clause missing or lacks user_id ownership check'
+    ELSE 'PASS'
+  END AS status
+FROM expected_follows_policies e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = 'event_follows'
+  AND p.policyname = e.polname
+ORDER BY e.polname;
+
+-- ── Part D: CASCADE FK linkage (both FKs) ────────────────────────────────
+--
+-- event_follows.user_id  → auth.users(id)    ON DELETE CASCADE
+-- event_follows.event_id → public.events(id) ON DELETE CASCADE
+
+SELECT
+  c.conname AS constraint_name,
+  n_ref.nspname || '.' || cl_ref.relname AS referenced_table,
+  CASE c.confdeltype
+    WHEN 'c' THEN 'CASCADE'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  CASE
+    WHEN c.confdeltype = 'c' THEN 'PASS'
+    ELSE 'FAIL ← expected CASCADE, got: ' || c.confdeltype::text
+  END AS status
+FROM pg_constraint c
+JOIN pg_class cl         ON cl.oid  = c.conrelid
+JOIN pg_namespace n      ON n.oid   = cl.relnamespace
+JOIN pg_class cl_ref     ON cl_ref.oid = c.confrelid
+JOIN pg_namespace n_ref  ON n_ref.oid  = cl_ref.relnamespace
+WHERE n.nspname  = 'public'
+  AND cl.relname = 'event_follows'
+  AND c.contype  = 'f'
+ORDER BY referenced_table;
+
+-- ── Part E: sync_follow_count is SECURITY DEFINER ────────────────────────
+--
+-- Section 4 covers all SECURITY DEFINER functions. This part provides a
+-- focused pass/fail for sync_follow_count specifically in context of this
+-- section (so a reader reviewing Section 17 gets the full picture without
+-- scrolling back to Section 4).
+
+SELECT
+  p.proname AS "function",
+  CASE
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname = 'sync_follow_count';
+
+-- ── Part F: Unexpected permissive policies ────────────────────────────────
+
+SELECT
+  policyname AS "policy",
+  cmd,
+  roles,
+  CASE
+    WHEN policyname IN ('follows_read_own', 'follows_insert_own', 'follows_delete_own')
+      THEN 'PASS — expected permissive policy'
+    ELSE 'FAIL ← unexpected permissive policy (review and remove): ' || policyname
+  END AS status
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'event_follows'
+  AND permissive = 'PERMISSIVE'
+ORDER BY policyname;
+
+-- ── Section 18: Public RPC accessibility (migrations 020, 021) ───────────
+--
+-- get_rising_events and search_events are SECURITY INVOKER (default) public
+-- read functions. Both anon and authenticated roles must be able to call them.
+-- (Unlike internal functions which are explicitly revoked in Section 7.)
+
+WITH rpc_checks AS (
+  SELECT 'get_rising_events(integer)'  AS fn UNION ALL
+  SELECT 'search_events(text,integer)'
+),
+roles AS (
+  SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
+)
+SELECT
+  c.fn,
+  r.rolname AS "role",
+  CASE
+    WHEN has_function_privilege(r.rolname, 'public.' || c.fn, 'execute')
+      THEN 'PASS — can execute'
+    ELSE 'FAIL ← role cannot execute (check GRANT on function)'
+  END AS status
+FROM rpc_checks c CROSS JOIN roles r
+ORDER BY c.fn, r.rolname;
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–018 are applied.
+-- All rows should show 'PASS' after migrations 001–021 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
