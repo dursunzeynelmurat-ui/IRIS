@@ -106,7 +106,8 @@ WHERE n.nspname = 'public'
     'reconcile_source_counts',   -- migration 015
     'reconcile_trust_scores',    -- migration 015
     'compute_trust_score',       -- migration 016
-    'sync_follow_count'          -- migration 019
+    'sync_follow_count',         -- migration 019
+    'toggle_event_follow'        -- migration 019 (SECURITY DEFINER, user-callable RPC)
   )
 ORDER BY p.proname;
 
@@ -762,17 +763,19 @@ WHERE schemaname = 'public'
   AND permissive = 'PERMISSIVE'
 ORDER BY policyname;
 
--- ── Section 18: Public RPC accessibility (migrations 019, 020, 021) ───────
+-- ── Section 18: Public RPC accessibility (migrations 019, 020, 021, 022) ──
 --
--- toggle_event_follow is SECURITY DEFINER — only authenticated can call it
---   (anon is rejected by the auth.uid() IS NULL check inside the function).
--- get_rising_events and search_events are SECURITY INVOKER public read
---   functions — both anon and authenticated must be able to call them.
+-- toggle_event_follow is SECURITY DEFINER — only authenticated should call it
+--   (anon is rejected inside the function body via auth.uid() IS NULL check;
+--   EXECUTE is still granted to PUBLIC by default so we mark anon as SKIP).
+-- get_rising_events, search_events, search_event_updates are SECURITY INVOKER
+--   public read functions — both anon and authenticated must be able to call them.
 
 WITH rpc_checks AS (
-  SELECT 'toggle_event_follow(uuid)'   AS fn, false AS anon_allowed UNION ALL
-  SELECT 'get_rising_events(integer)'  AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_events(text,integer)' AS fn, true  AS anon_allowed
+  SELECT 'toggle_event_follow(uuid)'     AS fn, false AS anon_allowed UNION ALL
+  SELECT 'get_rising_events(integer)'    AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_events(text,integer)'   AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_event_updates(text)'    AS fn, true  AS anon_allowed
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -791,32 +794,47 @@ FROM rpc_checks c CROSS JOIN roles r
 ORDER BY c.fn, r.rolname;
 
 -- ── Section 19: GIN FTS indexes (migration 022) ───────────────────────────
+--
+-- Uses an expected-set LEFT JOIN so a missing index produces an explicit FAIL
+-- row rather than silently returning zero rows.
 
 SELECT
-  indexname,
-  tablename,
+  expected.index_name,
   CASE
-    WHEN indexname IN ('idx_events_fts', 'idx_event_updates_fts') THEN 'PASS'
-    ELSE 'FAIL ← FTS GIN index missing (apply migration 022)'
+    WHEN pi.indexname IS NOT NULL THEN 'PASS — GIN index exists'
+    ELSE 'FAIL ← GIN index missing (apply migration 022)'
   END AS status
-FROM pg_indexes
-WHERE schemaname = 'public'
-  AND indexname IN ('idx_events_fts', 'idx_event_updates_fts')
-ORDER BY indexname;
+FROM (VALUES
+  ('idx_events_fts'),
+  ('idx_event_updates_fts')
+) AS expected(index_name)
+LEFT JOIN pg_indexes pi
+  ON pi.schemaname = 'public'
+  AND pi.indexname = expected.index_name
+ORDER BY expected.index_name;
 
 -- ── Section 20: search_event_updates function (migration 022) ─────────────
+--
+-- Uses LEFT JOIN so a missing function produces an explicit FAIL row rather
+-- than silently returning zero rows.
 
 SELECT
-  p.proname AS function_name,
-  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  'search_event_updates' AS function_name,
   CASE
-    WHEN p.proname = 'search_event_updates' AND p.prosecdef = false THEN 'PASS'
-    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER (apply migration 022)'
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← function missing (apply migration 022)'
+    WHEN p.prosecdef = true
+      THEN 'FAIL ← function is unexpectedly SECURITY DEFINER'
+    ELSE 'PASS — SECURITY INVOKER'
   END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname = 'search_event_updates';
+FROM (SELECT 'search_event_updates'::text AS expected_fn) x
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'search_event_updates'
+  LIMIT 1
+) p ON p.proname = x.expected_fn;
 
 -- ── Summary ───────────────────────────────────────────────────────────────
 -- All rows should show 'PASS' (or 'SKIP') after migrations 001–022 are applied.

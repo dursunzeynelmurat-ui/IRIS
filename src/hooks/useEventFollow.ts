@@ -13,9 +13,16 @@
  * UNAUTHENTICATED:
  *   If userId is null the hook returns isFollowing=null and a no-op toggle.
  *   The caller does not need to guard against this case.
+ *
+ * CANCELLATION:
+ *   The initial fetch uses a local closure variable (not a shared ref) to
+ *   mark stale requests. A shared cancelledRef has a race: the new effect run
+ *   resets it false before the prior in-flight .then() resolves, so stale data
+ *   can overwrite state. A local variable is scoped to this exact effect
+ *   invocation and cannot be reset by a concurrent one.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface UseEventFollowResult {
@@ -38,7 +45,6 @@ export function useEventFollow(
   const [isFollowing, setIsFollowing] = useState<boolean | null>(null);
   const [toggling, setToggling]       = useState(false);
   const [error, setError]             = useState<string | null>(null);
-  const cancelledRef                  = useRef(false);
 
   // ── Initial fetch ──────────────────────────────────────────────────────
 
@@ -49,8 +55,11 @@ export function useEventFollow(
       return;
     }
 
-    cancelledRef.current = false;
     setLoading(true);
+    // Local var — unique to this effect invocation. The cleanup sets it true
+    // when userId or eventId changes, which covers an in-flight .then() that
+    // resolves after the new effect has already started.
+    let cancelled = false;
 
     supabase
       .from('event_follows')
@@ -59,7 +68,7 @@ export function useEventFollow(
       .eq('event_id', eventId)
       .maybeSingle()
       .then(({ data, error: err }) => {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         if (err) {
           setError(err.message);
           setIsFollowing(false);
@@ -70,7 +79,7 @@ export function useEventFollow(
       });
 
     return () => {
-      cancelledRef.current = true;
+      cancelled = true;
     };
   }, [eventId, userId]);
 
