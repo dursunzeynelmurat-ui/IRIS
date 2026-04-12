@@ -1,90 +1,82 @@
-/**
- * useSearch — full-text search over events and event_updates.
- *
- * Calls search_events() and search_event_updates() RPCs (migration 021).
- * Both run as SECURITY INVOKER so the caller's RLS context applies.
- *
- * DEBOUNCE:
- *   Searches fire after a 300 ms debounce to avoid hammering the DB on
- *   every keystroke. Cancels in-flight fetches when query changes.
- *
- * CLEARING:
- *   Call clear() or set query to '' to reset results without a DB round-trip.
- *
- * SCOPE:
- *   Returns events and event_updates in separate arrays. The caller decides
- *   how to display them (e.g. grouped sections, merged list, etc.).
- */
-
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Event, EventUpdate } from '../types';
+import type { Event } from '../types';
 
 interface UseSearchResult {
-  events: Event[];
-  updates: EventUpdate[];
-  loading: boolean;
+  results: Event[];
+  searching: boolean;
   error: string | null;
-  clear: () => void;
+  query: string;
+  setQuery: (q: string) => void;
+  clearResults: () => void;
 }
 
-const DEBOUNCE_MS = 300;
-
-export function useSearch(query: string): UseSearchResult {
-  const [events, setEvents]   = useState<Event[]>([]);
-  const [updates, setUpdates] = useState<EventUpdate[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelRef = useRef(false);
-
-  const clear = useCallback(() => {
-    setEvents([]);
-    setUpdates([]);
-    setLoading(false);
-    setError(null);
-  }, []);
+/**
+ * Debounced event search via the search_events RPC (migration 021).
+ *
+ * - Fires when query length ≥ 2 (server enforces the same minimum)
+ * - Clears results immediately when query drops below 2 chars
+ * - Debounce window: debounceMs (default 300 ms)
+ * - Outstanding requests are cancelled when a new query is set
+ */
+export function useSearch(debounceMs = 300): UseSearchResult {
+  const [query, setQueryState] = useState('');
+  const [results, setResults]  = useState<Event[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const timerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    const trimmed = query.trim();
+    // Clear any pending debounce
+    if (timerRef.current) clearTimeout(timerRef.current);
+    cancelledRef.current = true; // cancel any in-flight fetch from prior query
 
-    if (!trimmed) {
-      clear();
+    if (query.trim().length < 2) {
+      setResults([]);
+      setSearching(false);
+      setError(null);
       return;
     }
 
-    // Debounce
-    if (timerRef.current) clearTimeout(timerRef.current);
-    cancelRef.current = false;
+    setSearching(true);
+    cancelledRef.current = false;
 
     timerRef.current = setTimeout(async () => {
-      setLoading(true);
-      setError(null);
+      const { data, error: err } = await supabase.rpc('search_events', {
+        p_query: query.trim(),
+      });
 
-      const [eventsResult, updatesResult] = await Promise.all([
-        supabase.rpc('search_events', { query: trimmed }),
-        supabase.rpc('search_event_updates', { query: trimmed }),
-      ]);
+      if (cancelledRef.current) return;
 
-      if (cancelRef.current) return;
-
-      if (eventsResult.error || updatesResult.error) {
-        setError('Search failed. Please try again.');
-        setEvents([]);
-        setUpdates([]);
+      if (err) {
+        setError(err.message);
+        setResults([]);
       } else {
-        setEvents((eventsResult.data as Event[]) ?? []);
-        setUpdates((updatesResult.data as EventUpdate[]) ?? []);
+        setResults((data as Event[]) ?? []);
+        setError(null);
       }
-
-      setLoading(false);
-    }, DEBOUNCE_MS);
+      setSearching(false);
+    }, debounceMs);
 
     return () => {
-      cancelRef.current = true;
       if (timerRef.current) clearTimeout(timerRef.current);
+      cancelledRef.current = true;
     };
-  }, [query, clear]);
+  }, [query, debounceMs]);
 
-  return { events, updates, loading, error, clear };
+  const setQuery = useCallback((q: string) => {
+    setQueryState(q);
+  }, []);
+
+  const clearResults = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    cancelledRef.current = true;
+    setQueryState('');
+    setResults([]);
+    setSearching(false);
+    setError(null);
+  }, []);
+
+  return { results, searching, error, query, setQuery, clearResults };
 }

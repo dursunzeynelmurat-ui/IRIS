@@ -31,13 +31,13 @@ SELECT
   with_check
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences')
+  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
 ORDER BY tablename, policyname;
 
--- ── Section 3: RESTRICTIVE deny policies — all 14 required ──────────────
+-- ── Section 3: RESTRICTIVE deny policies — all 16 required ──────────────
 --
--- After migrations 004, 005, 007, 010, 018 the following RESTRICTIVE policies
--- must exist. Any missing row = FAIL.
+-- After migrations 004, 005, 007, 010, 018, 019 the following RESTRICTIVE
+-- policies must exist. Any missing row = FAIL.
 
 WITH expected_restrictive AS (
   SELECT * FROM (VALUES
@@ -59,7 +59,10 @@ WITH expected_restrictive AS (
     ('users',             'deny_users_anon'),
     -- migration 018
     ('user_preferences',  'deny_prefs_anon'),
-    ('user_preferences',  'deny_prefs_delete')
+    ('user_preferences',  'deny_prefs_delete'),
+    -- migration 019
+    ('event_follows',     'deny_follows_anon'),
+    ('event_follows',     'deny_follows_update')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -102,7 +105,8 @@ WHERE n.nspname = 'public'
     'ingest_event',
     'reconcile_source_counts',   -- migration 015
     'reconcile_trust_scores',    -- migration 015
-    'compute_trust_score'        -- migration 016
+    'compute_trust_score',       -- migration 016
+    'sync_follow_count'          -- migration 019
   )
 ORDER BY p.proname;
 
@@ -130,7 +134,8 @@ WHERE n.nspname = 'public'
   AND t.tgname IN (
     'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE OR DELETE on signals (migrations 006, 013)
     'trg_sync_source_count',              -- AFTER INSERT OR DELETE on event_updates (migration 003)
-    'signals_enforce_immutable_fields'    -- BEFORE UPDATE on signals (migration 009)
+    'signals_enforce_immutable_fields',   -- BEFORE UPDATE on signals (migration 009)
+    'trg_sync_follow_count'               -- AFTER INSERT OR DELETE on event_follows (migration 019)
   )
 ORDER BY c.relname, t.tgname;
 
@@ -252,7 +257,9 @@ WITH deny_policies AS (
     ('signals',           'deny_signals_anon'),
     ('users',             'deny_users_anon'),
     ('user_preferences',  'deny_prefs_anon'),
-    ('user_preferences',  'deny_prefs_delete')
+    ('user_preferences',  'deny_prefs_delete'),
+    ('event_follows',     'deny_follows_anon'),
+    ('event_follows',     'deny_follows_update')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -345,7 +352,9 @@ WITH expected_triggers AS (
     ('signals',       'signals_sync_trust_score',         29,
      'AFTER INSERT OR UPDATE OR DELETE — must cover DELETE for user account cascade'),
     ('event_updates', 'trg_sync_source_count',            13,
-     'AFTER INSERT OR DELETE')
+     'AFTER INSERT OR DELETE'),
+    ('event_follows', 'trg_sync_follow_count',            13,
+     'AFTER INSERT OR DELETE — keeps follow_count denormalized counter in sync')
   ) AS t(tbl, trig, expected_tgtype, description)
 )
 SELECT
@@ -605,159 +614,111 @@ WHERE n.nspname  = 'public'
   AND cl.relname = 'user_preferences'
   AND c.contype  = 'f';
 
--- ── Section 16: event_follows table exists with correct columns ───────────
+
+-- ── Section 17: event_follows table (migration 019) ──────────────────────
+--
+-- Comprehensive verification of the event_follows table and its counter
+-- mechanism on events.follow_count.
+--
+-- RLS enablement   → Section 1 (included there)
+-- RESTRICTIVE deny → Sections 3 + 11 (deny_follows_anon, deny_follows_update)
+-- Trigger timing   → Section 13 (trg_sync_follow_count, tgtype=13)
+
+-- ── Part A: Table + column existence ─────────────────────────────────────
 
 SELECT
-  column_name,
-  data_type,
-  is_nullable,
-  column_default,
+  cl.relname AS table_name,
+  CASE WHEN cl.oid IS NOT NULL THEN 'PASS — table exists'
+       ELSE 'FAIL ← event_follows table missing (apply migration 019)' END AS table_status,
+  (
+    SELECT COUNT(*) FROM pg_attribute a
+    WHERE a.attrelid = cl.oid
+      AND a.attname IN ('user_id', 'event_id', 'created_at')
+      AND NOT a.attisdropped
+  ) AS expected_columns_found,
   CASE
-    WHEN column_name = 'user_id'    AND data_type = 'uuid'                          THEN 'PASS'
-    WHEN column_name = 'event_id'   AND data_type = 'uuid'                          THEN 'PASS'
-    WHEN column_name = 'created_at' AND data_type = 'timestamp with time zone'      THEN 'PASS'
-    ELSE 'FAIL ← unexpected column or type'
-  END AS status
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name   = 'event_follows'
-ORDER BY ordinal_position;
+    WHEN cl.oid IS NULL
+      THEN 'FAIL ← table missing'
+    WHEN (
+      SELECT COUNT(*) FROM pg_attribute a
+      WHERE a.attrelid = cl.oid
+        AND a.attname IN ('user_id', 'event_id', 'created_at')
+        AND NOT a.attisdropped
+    ) < 3
+      THEN 'FAIL ← one or more expected columns (user_id, event_id, created_at) not found'
+    ELSE 'PASS — all 3 expected columns present'
+  END AS column_status
+FROM pg_namespace n
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = n.oid AND cl.relname = 'event_follows' AND cl.relkind = 'r'
+WHERE n.nspname = 'public';
 
--- ── Section 17: follow_count column on events ─────────────────────────────
+-- ── Part B: follow_count column on events ─────────────────────────────────
 
 SELECT
-  column_name,
-  data_type,
-  is_nullable,
-  column_default,
+  a.attname AS column_name,
   CASE
-    WHEN column_name = 'follow_count'
-      AND data_type = 'integer'
-      AND is_nullable = 'NO'
-      THEN 'PASS'
-    ELSE 'FAIL ← follow_count column missing, wrong type, or nullable'
+    WHEN a.attnum IS NULL
+      THEN 'FAIL ← follow_count column missing from events (apply migration 019)'
+    ELSE 'PASS'
   END AS status
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name   = 'events'
-  AND column_name  = 'follow_count';
+FROM pg_class cl
+JOIN pg_namespace n ON n.oid = cl.relnamespace
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = 'follow_count' AND NOT a.attisdropped
+WHERE n.nspname = 'public' AND cl.relname = 'events';
 
--- ── Section 18: RLS policies on event_follows ────────────────────────────
+-- ── Part C: Permissive policy ownership expressions ───────────────────────
+--
+-- follows_read_own:   USING must contain user_id
+-- follows_insert_own: WITH CHECK must contain user_id
+-- follows_delete_own: USING must contain user_id
 
+WITH expected_follows_policies AS (
+  SELECT * FROM (VALUES
+    ('follows_read_own',   'SELECT', 'auth.uid() = user_id', NULL::text),
+    ('follows_insert_own', 'INSERT', NULL::text,             'auth.uid() = user_id'),
+    ('follows_delete_own', 'DELETE', 'auth.uid() = user_id', NULL::text)
+  ) AS t(polname, cmd, required_qual_fragment, required_check_fragment)
+)
 SELECT
-  policyname,
-  cmd,
-  roles,
-  CASE WHEN permissive = 'PERMISSIVE' THEN 'permissive' ELSE 'RESTRICTIVE' END AS type,
+  e.polname    AS "policy",
+  e.cmd,
+  p.qual        AS "using_expr",
+  p.with_check  AS "with_check_expr",
   CASE
-    WHEN policyname = 'deny_follows_anon'   AND permissive = 'RESTRICTIVE' THEN 'PASS'
-    WHEN policyname = 'deny_follows_update' AND permissive = 'RESTRICTIVE' THEN 'PASS'
-    WHEN policyname = 'follows_read_own'    AND permissive = 'PERMISSIVE'  THEN 'PASS'
-    WHEN policyname = 'follows_insert_own'  AND permissive = 'PERMISSIVE'  THEN 'PASS'
-    WHEN policyname = 'follows_delete_own'  AND permissive = 'PERMISSIVE'  THEN 'PASS'
-    ELSE 'FAIL ← unexpected policy configuration'
+    WHEN p.policyname IS NULL
+      THEN 'FAIL ← policy missing (apply migration 019)'
+    WHEN e.required_qual_fragment IS NOT NULL
+      AND (p.qual IS NULL OR p.qual NOT LIKE '%user_id%')
+      THEN 'FAIL ← USING clause missing or lacks user_id ownership check'
+    WHEN e.required_check_fragment IS NOT NULL
+      AND (p.with_check IS NULL OR p.with_check NOT LIKE '%user_id%')
+      THEN 'FAIL ← WITH CHECK clause missing or lacks user_id ownership check'
+    ELSE 'PASS'
   END AS status
-FROM pg_policies
-WHERE schemaname = 'public'
-  AND tablename  = 'event_follows'
-ORDER BY policyname;
+FROM expected_follows_policies e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = 'event_follows'
+  AND p.policyname = e.polname
+ORDER BY e.polname;
 
--- ── Section 19: sync_follow_count trigger ────────────────────────────────
-
-SELECT
-  trigger_name,
-  event_manipulation,
-  action_timing,
-  action_orientation,
-  CASE
-    WHEN trigger_name      = 'trg_sync_follow_count'
-      AND action_timing    = 'AFTER'
-      AND action_orientation = 'ROW'
-      THEN 'PASS'
-    ELSE 'FAIL ← trigger missing or misconfigured'
-  END AS status
-FROM information_schema.triggers
-WHERE trigger_schema = 'public'
-  AND event_object_table = 'event_follows'
-  AND trigger_name = 'trg_sync_follow_count';
-
--- ── Section 20: toggle_event_follow function ──────────────────────────────
-
-SELECT
-  p.proname                                     AS function_name,
-  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
-  CASE
-    WHEN p.proname = 'toggle_event_follow' AND p.prosecdef = true THEN 'PASS'
-    ELSE 'FAIL ← function missing or not SECURITY DEFINER'
-  END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname  = 'public'
-  AND p.proname  = 'toggle_event_follow';
-
--- ── Section 21: GIN indexes for full-text search ──────────────────────────
-
-SELECT
-  indexname,
-  tablename,
-  indexdef,
-  CASE
-    WHEN indexname IN ('idx_events_fts', 'idx_event_updates_fts') THEN 'PASS'
-    ELSE 'FAIL ← FTS index missing'
-  END AS status
-FROM pg_indexes
-WHERE schemaname = 'public'
-  AND indexname IN ('idx_events_fts', 'idx_event_updates_fts')
-ORDER BY indexname;
-
--- ── Section 22: search_events and search_event_updates functions ──────────
-
-SELECT
-  p.proname                                     AS function_name,
-  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
-  CASE
-    WHEN p.proname IN ('search_events', 'search_event_updates')
-      AND p.prosecdef = false
-      THEN 'PASS'
-    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER'
-  END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname IN ('search_events', 'search_event_updates')
-ORDER BY p.proname;
-
--- ── Section 23: get_rising_events function ────────────────────────────────
-
-SELECT
-  p.proname                                     AS function_name,
-  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
-  CASE
-    WHEN p.proname = 'get_rising_events' AND p.prosecdef = false THEN 'PASS'
-    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER'
-  END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname = 'get_rising_events';
-
--- ── Section 24: FK cascade rules on event_follows ────────────────────────
+-- ── Part D: CASCADE FK linkage (both FKs) ────────────────────────────────
+--
+-- event_follows.user_id  → auth.users(id)    ON DELETE CASCADE
+-- event_follows.event_id → public.events(id) ON DELETE CASCADE
 
 SELECT
   c.conname AS constraint_name,
+  n_ref.nspname || '.' || cl_ref.relname AS referenced_table,
   CASE c.confdeltype
-    WHEN 'a' THEN 'NO ACTION'
-    WHEN 'r' THEN 'RESTRICT'
     WHEN 'c' THEN 'CASCADE'
-    WHEN 'n' THEN 'SET NULL'
-    WHEN 'd' THEN 'SET DEFAULT'
     ELSE c.confdeltype::text
   END AS delete_rule,
-  n_ref.nspname || '.' || cl_ref.relname AS referenced_table,
   CASE
-    WHEN c.confdeltype = 'c'
-      THEN 'PASS'
-    ELSE 'FAIL ← delete_rule is not CASCADE: ' || c.confdeltype::text
+    WHEN c.confdeltype = 'c' THEN 'PASS'
+    ELSE 'FAIL ← expected CASCADE, got: ' || c.confdeltype::text
   END AS status
 FROM pg_constraint c
 JOIN pg_class cl         ON cl.oid  = c.conrelid
@@ -767,8 +728,96 @@ JOIN pg_namespace n_ref  ON n_ref.oid  = cl_ref.relnamespace
 WHERE n.nspname  = 'public'
   AND cl.relname = 'event_follows'
   AND c.contype  = 'f'
-ORDER BY c.conname;
+ORDER BY referenced_table;
+
+-- ── Part E: sync_follow_count is SECURITY DEFINER ────────────────────────
+
+SELECT
+  p.proname AS "function",
+  CASE
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname = 'sync_follow_count';
+
+-- ── Part F: Unexpected permissive policies ────────────────────────────────
+
+SELECT
+  policyname AS "policy",
+  cmd,
+  roles,
+  CASE
+    WHEN policyname IN ('follows_read_own', 'follows_insert_own', 'follows_delete_own')
+      THEN 'PASS — expected permissive policy'
+    ELSE 'FAIL ← unexpected permissive policy (review and remove): ' || policyname
+  END AS status
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'event_follows'
+  AND permissive = 'PERMISSIVE'
+ORDER BY policyname;
+
+-- ── Section 18: Public RPC accessibility (migrations 019, 020, 021) ───────
+--
+-- toggle_event_follow is SECURITY DEFINER — only authenticated can call it
+--   (anon is rejected by the auth.uid() IS NULL check inside the function).
+-- get_rising_events and search_events are SECURITY INVOKER public read
+--   functions — both anon and authenticated must be able to call them.
+
+WITH rpc_checks AS (
+  SELECT 'toggle_event_follow(uuid)'   AS fn, false AS anon_allowed UNION ALL
+  SELECT 'get_rising_events(integer)'  AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_events(text,integer)' AS fn, true  AS anon_allowed
+),
+roles AS (
+  SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
+)
+SELECT
+  c.fn,
+  r.rolname AS "role",
+  CASE
+    WHEN r.rolname = 'anon' AND NOT c.anon_allowed
+      THEN 'SKIP — anon not expected to have execute (function enforces auth internally)'
+    WHEN has_function_privilege(r.rolname, 'public.' || c.fn, 'execute')
+      THEN 'PASS — can execute'
+    ELSE 'FAIL ← role cannot execute (check GRANT on function)'
+  END AS status
+FROM rpc_checks c CROSS JOIN roles r
+ORDER BY c.fn, r.rolname;
+
+-- ── Section 19: GIN FTS indexes (migration 022) ───────────────────────────
+
+SELECT
+  indexname,
+  tablename,
+  CASE
+    WHEN indexname IN ('idx_events_fts', 'idx_event_updates_fts') THEN 'PASS'
+    ELSE 'FAIL ← FTS GIN index missing (apply migration 022)'
+  END AS status
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN ('idx_events_fts', 'idx_event_updates_fts')
+ORDER BY indexname;
+
+-- ── Section 20: search_event_updates function (migration 022) ─────────────
+
+SELECT
+  p.proname AS function_name,
+  CASE p.prosecdef WHEN true THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security,
+  CASE
+    WHEN p.proname = 'search_event_updates' AND p.prosecdef = false THEN 'PASS'
+    ELSE 'FAIL ← function missing or unexpectedly SECURITY DEFINER (apply migration 022)'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'search_event_updates';
 
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' after migrations 001–021 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–022 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.

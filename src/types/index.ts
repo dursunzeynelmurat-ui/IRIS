@@ -14,7 +14,7 @@ export interface Event {
   status: EventStatus;
   trust_score: number; // 0–100
   source_count: number;
-  follow_count: number; // denormalized, maintained by sync_follow_count trigger
+  follow_count: number; // denormalized; kept in sync by sync_follow_count trigger
   created_at: string;
 }
 

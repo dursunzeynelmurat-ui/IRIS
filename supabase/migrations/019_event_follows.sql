@@ -18,18 +18,31 @@
 --    read after the mutation. SECURITY DEFINER so it can bypass RLS internally
 --    while still enforcing the auth.uid() ownership check in the function body.
 --
--- 4. UPDATE is denied via RESTRICTIVE policy (consistent with deny patterns on
---    all other junction tables). Users insert (follow) or delete (unfollow);
---    there is no meaningful UPDATE on this table.
+-- 4. UPDATE is denied via RESTRICTIVE policy. Users insert (follow) or delete
+--    (unfollow); there is no meaningful UPDATE on this table.
 --
 -- 5. Anon is denied ALL access via RESTRICTIVE policy, consistent with
 --    deny_signals_anon and deny_users_anon (migration 010).
 --
--- 6. sync_follow_count() is NOT SECURITY DEFINER — the trigger runs as the
---    table owner (postgres/superuser, BYPASSRLS) by default for AFTER row
---    triggers, so UPDATE on events (which is restricted by deny_events_update)
---    is permitted from within the trigger context. Consistent with
---    sync_source_count() pattern from migration 003.
+-- 6. sync_follow_count() is SECURITY DEFINER + SET search_path = public so
+--    the UPDATE on events.follow_count succeeds even when the
+--    deny_events_update RESTRICTIVE policy is in effect (same pattern as
+--    sync_source_count from migration 008).
+
+
+-- ── event_follows table ───────────────────────────────────────────────────
+
+CREATE TABLE public.event_follows (
+  user_id    UUID NOT NULL REFERENCES auth.users(id)    ON DELETE CASCADE,
+  event_id   UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, event_id)
+);
+
+-- Efficient lookup of all followers for an event
+CREATE INDEX idx_event_follows_event_id ON public.event_follows (event_id);
+-- Efficient lookup of all events a user follows
+CREATE INDEX idx_event_follows_user_id  ON public.event_follows (user_id);
 
 
 -- ── Add follow_count to events ────────────────────────────────────────────
@@ -38,22 +51,10 @@ ALTER TABLE public.events
   ADD COLUMN follow_count INTEGER NOT NULL DEFAULT 0
   CHECK (follow_count >= 0);
 
+-- Descending composite index supports ORDER BY follow_count DESC, trust_score DESC
+-- used in get_rising_events (migration 020).
 CREATE INDEX idx_events_follow_count
   ON public.events (follow_count DESC, trust_score DESC);
-
-
--- ── event_follows table ───────────────────────────────────────────────────
-
-CREATE TABLE public.event_follows (
-  user_id   UUID NOT NULL REFERENCES auth.users(id)  ON DELETE CASCADE,
-  event_id  UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (user_id, event_id)
-);
-
--- Efficient lookup of all follows for a single user (feed queries, unfollow UX)
-CREATE INDEX idx_event_follows_user_id
-  ON public.event_follows (user_id);
 
 
 -- ── Row Level Security ────────────────────────────────────────────────────
@@ -65,22 +66,24 @@ CREATE POLICY "deny_follows_anon" ON public.event_follows
   AS RESTRICTIVE FOR ALL TO anon
   USING (false) WITH CHECK (false);
 
--- RESTRICTIVE: no UPDATE on follows rows (insert = follow, delete = unfollow).
+-- RESTRICTIVE: authenticated cannot UPDATE follows rows.
+-- Rows are inserted (follow) or deleted (unfollow); an UPDATE could
+-- reassign user_id or event_id to another user.
 CREATE POLICY "deny_follows_update" ON public.event_follows
   AS RESTRICTIVE FOR UPDATE TO authenticated
-  USING (false);
+  USING (false) WITH CHECK (false);
 
 -- PERMISSIVE: authenticated can read their own follows
 CREATE POLICY "follows_read_own" ON public.event_follows
   FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
 
--- PERMISSIVE: authenticated can insert their own follow
+-- PERMISSIVE: authenticated can follow (insert their own row)
 CREATE POLICY "follows_insert_own" ON public.event_follows
   FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
 
--- PERMISSIVE: authenticated can delete their own follow (unfollow)
+-- PERMISSIVE: authenticated can unfollow (delete their own row)
 CREATE POLICY "follows_delete_own" ON public.event_follows
   FOR DELETE TO authenticated
   USING (auth.uid() = user_id);
@@ -88,13 +91,16 @@ CREATE POLICY "follows_delete_own" ON public.event_follows
 
 -- ── sync_follow_count trigger ─────────────────────────────────────────────
 --
--- Mirrors sync_source_count() from migration 003. Maintains the denormalized
--- follow_count on events after each INSERT or DELETE on event_follows.
+-- Mirrors sync_source_count() from migration 003/008.
+-- SECURITY DEFINER + SET search_path: ensures the UPDATE on events.follow_count
+-- succeeds regardless of the deny_events_update RESTRICTIVE policy.
 -- GREATEST guard prevents follow_count going negative from concurrent deletes.
 
 CREATE OR REPLACE FUNCTION public.sync_follow_count()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -111,8 +117,8 @@ END;
 $$;
 
 CREATE TRIGGER trg_sync_follow_count
-AFTER INSERT OR DELETE ON public.event_follows
-FOR EACH ROW EXECUTE FUNCTION public.sync_follow_count();
+  AFTER INSERT OR DELETE ON public.event_follows
+  FOR EACH ROW EXECUTE FUNCTION public.sync_follow_count();
 
 
 -- ── toggle_event_follow RPC ───────────────────────────────────────────────
@@ -120,13 +126,12 @@ FOR EACH ROW EXECUTE FUNCTION public.sync_follow_count();
 -- Atomic follow/unfollow for a single event. Returns 'followed' or
 -- 'unfollowed' so the client can update state without a subsequent SELECT.
 --
--- SECURITY DEFINER: runs as the function owner so it can read/write
--- event_follows with BYPASSRLS while still enforcing ownership in the
--- function body (auth.uid() check before every write).
+-- SECURITY DEFINER: runs as the function owner (BYPASSRLS) so it can
+-- read/write event_follows without the calling role's RLS context interfering.
+-- Ownership is enforced in the function body via auth.uid().
 --
--- The check-then-insert/delete is safe from race conditions in PostgreSQL:
--- the composite PK on (user_id, event_id) prevents double-inserts, and
--- the DELETE WHERE is idempotent.
+-- ON CONFLICT DO NOTHING on INSERT: defensive against concurrent duplicate
+-- calls (primary key would otherwise raise a unique violation).
 
 CREATE OR REPLACE FUNCTION public.toggle_event_follow(p_event_id UUID)
 RETURNS TEXT

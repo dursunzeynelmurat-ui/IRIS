@@ -2,50 +2,55 @@
  * useEventFollow — follow/unfollow state for a single event.
  *
  * Fetches the current follow state for (userId, eventId) from event_follows
- * and exposes a toggle function backed by the toggle_event_follow RPC.
+ * and exposes a toggle backed by the toggle_event_follow RPC (migration 019).
  *
  * OPTIMISTIC UPDATE:
- *   toggleFollow flips local state immediately, then calls the RPC.
+ *   toggle flips local state immediately, then calls the RPC.
  *   On failure it reverts the local state and surfaces an error message.
- *   This matches the pattern used by useUserSignal.
+ *   The RPC returns 'followed'|'unfollowed' which is used to sync state
+ *   in case the optimistic guess differed from the DB truth.
  *
  * UNAUTHENTICATED:
- *   If userId is null/undefined the hook returns followed=false and a no-op
- *   toggle. The caller does not need to guard against this case.
+ *   If userId is null the hook returns isFollowing=null and a no-op toggle.
+ *   The caller does not need to guard against this case.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface UseEventFollowResult {
-  followed: boolean;
-  loading: boolean;   // true during initial fetch
-  toggling: boolean;  // true during toggle RPC call
+  /** null = loading, true/false = resolved */
+  isFollowing: boolean | null;
+  /** true during initial data fetch */
+  loading: boolean;
+  /** true during toggle RPC call */
+  toggling: boolean;
   error: string | null;
-  toggleFollow: () => Promise<void>;
+  toggle: () => Promise<void>;
 }
 
 export function useEventFollow(
   eventId: string,
-  userId: string | null | undefined,
+  userId: string | null,
 ): UseEventFollowResult {
-  const [followed, setFollowed] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [toggling, setToggling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Start loading=true only when userId is already known to avoid a flash
+  const [loading, setLoading]         = useState(userId !== null);
+  const [isFollowing, setIsFollowing] = useState<boolean | null>(null);
+  const [toggling, setToggling]       = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const cancelledRef                  = useRef(false);
 
   // ── Initial fetch ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!userId || !eventId) {
-      setFollowed(false);
+    if (!userId) {
       setLoading(false);
+      setIsFollowing(null);
       return;
     }
 
-    let cancelled = false;
+    cancelledRef.current = false;
     setLoading(true);
-    setError(null);
 
     supabase
       .from('event_follows')
@@ -53,26 +58,29 @@ export function useEventFollow(
       .eq('user_id', userId)
       .eq('event_id', eventId)
       .maybeSingle()
-      .then(({ data, error: fetchError }) => {
-        if (cancelled) return;
-        if (fetchError) {
-          setError('Failed to load follow state.');
+      .then(({ data, error: err }) => {
+        if (cancelledRef.current) return;
+        if (err) {
+          setError(err.message);
+          setIsFollowing(false);
         } else {
-          setFollowed(data !== null);
+          setIsFollowing(data !== null);
         }
         setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelledRef.current = true;
+    };
   }, [eventId, userId]);
 
   // ── Toggle ─────────────────────────────────────────────────────────────
 
-  const toggleFollow = useCallback(async () => {
-    if (!userId || !eventId || toggling) return;
+  const toggle = useCallback(async () => {
+    if (!userId || toggling) return;
 
-    const prev = followed;
-    setFollowed(!prev);   // optimistic
+    const wasFollowing = isFollowing ?? false;
+    setIsFollowing(!wasFollowing); // optimistic
     setToggling(true);
     setError(null);
 
@@ -82,16 +90,15 @@ export function useEventFollow(
     setToggling(false);
 
     if (rpcError) {
-      setFollowed(prev);  // revert
-      setError('Failed to update follow. Please try again.');
+      setIsFollowing(wasFollowing); // revert
+      setError(rpcError.message);
       return;
     }
 
     // Sync to RPC truth in case the optimistic guess was wrong
-    // (e.g. concurrent toggle from another session).
-    if (data === 'followed') setFollowed(true);
-    if (data === 'unfollowed') setFollowed(false);
-  }, [eventId, userId, followed, toggling]);
+    if (data === 'followed')   setIsFollowing(true);
+    if (data === 'unfollowed') setIsFollowing(false);
+  }, [eventId, userId, isFollowing, toggling]);
 
-  return { followed, loading, toggling, error, toggleFollow };
+  return { isFollowing, loading, toggling, error, toggle };
 }
