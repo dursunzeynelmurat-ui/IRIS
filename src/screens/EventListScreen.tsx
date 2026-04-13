@@ -42,15 +42,26 @@ export function EventListScreen({ navigation }: Props) {
     if (!userId) return;
     navigation.setOptions({
       headerRight: () => (
-        <TouchableOpacity
-          onPress={() => supabase.auth.signOut()}
-          style={styles.signOutBtn}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings')}
+            style={styles.headerBtn}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+          >
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => supabase.auth.signOut()}
+            style={styles.headerBtn}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+          >
+            <Text style={styles.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
       ),
     });
   }, [navigation, userId]);
@@ -238,8 +249,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#636366',
   },
-  signOutBtn: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
     marginRight: 4,
+  },
+  headerBtn: {
+    // tappable padding handled by parent gap; no extra margin needed
+  },
+  settingsIcon: {
+    fontSize: 18,
+    color: '#8e8e93',
   },
   signOutText: {
     fontSize: 14,

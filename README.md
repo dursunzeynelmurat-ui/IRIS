@@ -19,13 +19,16 @@ IRIS does not deliver news articles. Events are evolving entities with changing 
 9. [Data Fetching](#9-data-fetching)
 10. [Realtime System](#10-realtime-system)
 11. [Signal System](#11-signal-system)
-12. [UI Structure](#12-ui-structure)
-13. [Error Handling](#13-error-handling)
-14. [Performance Decisions](#14-performance-decisions)
-15. [Environment Config](#15-environment-config)
-16. [TypeScript](#16-typescript)
-17. [Setup](#17-setup)
-18. [Current System State](#18-current-system-state)
+12. [User Preferences](#12-user-preferences)
+13. [Event Follows](#13-event-follows)
+14. [Rising Feed and Search](#14-rising-feed-and-search)
+15. [UI Structure](#15-ui-structure)
+16. [Error Handling](#16-error-handling)
+17. [Performance Decisions](#17-performance-decisions)
+18. [Environment Config](#18-environment-config)
+19. [TypeScript](#19-typescript)
+20. [Setup](#20-setup)
+21. [Current System State](#21-current-system-state)
 
 ---
 
@@ -42,7 +45,7 @@ IRIS performs the following functions:
 **IRIS does not include:**
 - Comments, replies, discussions, or reactions
 - User-created events or updates
-- Personalized feed or recommendation algorithm
+- Personalized feed or recommendation algorithm ("For You")
 - Editorial curation or moderation (MVP scope)
 - Source weighting
 
@@ -64,7 +67,8 @@ IRIS performs the following functions:
 | title | TEXT | |
 | status | TEXT | CHECK: `emerging`, `developing`, `verified`, `disputed` |
 | trust_score | INTEGER | Default 50, range 0–100 |
-| source_count | INTEGER | Default 0, maintained by trigger |
+| source_count | INTEGER | Default 0, maintained by `sync_source_count` trigger |
+| follow_count | INTEGER | Default 0, maintained by `sync_follow_count` trigger (migration 019) |
 | created_at | TIMESTAMPTZ | |
 
 ### `event_updates`
@@ -87,6 +91,24 @@ IRIS performs the following functions:
 | created_at | TIMESTAMPTZ | |
 
 **Constraint:** `UNIQUE(user_id, event_id)` — one signal per user per event.
+
+### `user_preferences`
+| Column | Type | Notes |
+|---|---|---|
+| user_id | UUID | PK + FK → `auth.users.id` ON DELETE CASCADE |
+| theme | TEXT | CHECK: `system`, `light`, `dark`; default `system` |
+| updated_at | TIMESTAMPTZ | Updated on each preference write |
+
+One row per user, auto-created on signup via the `handle_new_user` trigger. Stores UI preferences only — not used for feed personalization or content ranking.
+
+### `event_follows`
+| Column | Type | Notes |
+|---|---|---|
+| user_id | UUID | PK component + FK → `auth.users.id` ON DELETE CASCADE |
+| event_id | UUID | PK component + FK → `events.id` ON DELETE CASCADE |
+| created_at | TIMESTAMPTZ | |
+
+Composite PK `(user_id, event_id)`. One row per user-per-event follow. Inserting a row increments `events.follow_count`; deleting decrements it (both via `sync_follow_count` trigger, migration 019). Follows are intentionally reversible: users can follow and unfollow freely.
 
 ---
 
@@ -123,12 +145,16 @@ Incremented automatically via DB trigger on INSERT into `event_updates`.
 | `event_updates` | Public | — (service role only via ingestion script) |
 | `signals` | Own rows only | INSERT + UPDATE own rows only (no DELETE — protected by RESTRICTIVE deny) |
 | `users` | Own row only | — (created by trigger on auth.users INSERT) |
+| `user_preferences` | Own row only | INSERT + UPDATE own row only (no DELETE — row persists until account deletion via CASCADE) |
+| `event_follows` | Own rows only | INSERT + DELETE own rows only (reversible); UPDATE blocked by RESTRICTIVE deny |
 
 > **Security note:** RESTRICTIVE deny policies are ANDed with all permissive policies — no future accidental permissive policy can re-open a blocked path.
 > - Migrations 004 + 005: block `authenticated` from INSERT/UPDATE/DELETE on `events`, `event_updates`, and `users`; block `authenticated` INSERT on `event_updates`
 > - Migration 007: block `authenticated` DELETE on `signals`; add `WITH CHECK (auth.uid() = user_id)` to `signals_update_own` to prevent post-update ownership reassignment
 > - Migration 009: BEFORE UPDATE trigger enforces signal field immutability (user_id, event_id, created_at); `recalculate_trust_score` and `ingest_event` REVOKED from PUBLIC; all SECURITY DEFINER functions use `SET search_path = public`
 > - Migration 010: explicit `RESTRICTIVE FOR ALL TO anon USING (false)` on `signals` and `users` — the product rule "anonymous users do not enter the app" is now machine-verifiable via `pg_policies`
+> - Migration 018: `user_preferences` — `deny_prefs_anon` RESTRICTIVE (ALL TO anon) + `deny_prefs_delete` RESTRICTIVE (DELETE TO authenticated); permissive policies grant read/write to own row only
+> - Migration 019: `event_follows` — `deny_follows_anon` RESTRICTIVE (ALL TO anon) + `deny_follows_update` RESTRICTIVE (UPDATE TO authenticated, prevents row hijacking); permissive DELETE (follows are intentionally reversible)
 > - The ingestion script uses the service-role key which bypasses RLS entirely and is unaffected by any of the above.
 
 ---
@@ -185,25 +211,31 @@ src/
 │   ├── SignalButton.tsx      # Shared Confirm/Dispute button — active/faded/loading/disabled states
 │   └── StatusBadge.tsx      # Shared status badge — border + subtle tint + uppercase label
 ├── context/
-│   └── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
+│   ├── AuthContext.tsx      # Single AuthProvider + useAuth — one subscription for the app
+│   └── ThemeContext.tsx     # ThemeProvider + useTheme — resolves preference → scheme → navTheme
 ├── lib/
 │   ├── eventUtils.ts        # STATUS_LABEL, STATUS_COLOR, scoreColor — single source of truth for all status display logic
 │   ├── formatRelativeTime.ts  # "just now" / "5m ago" / "3h ago" helper
 │   └── supabase.ts          # Supabase client (env-var validated, chunked SecureStore)
 ├── hooks/
-│   ├── useAuth.ts           # Re-export from AuthContext (no subscription)
-│   ├── useEvents.ts         # Event list fetch + realtime (UPDATE + INSERT)
-│   ├── useEventDetail.ts    # Event + updates fetch + realtime
-│   ├── useUserSignal.ts     # Single-event signal fetch + upsert (EventDetailScreen)
-│   └── useUserSignals.ts    # Bulk signal fetch for all events (EventListScreen, one query)
+│   ├── useAuth.ts              # Re-export from AuthContext (no subscription)
+│   ├── useEvents.ts            # Event list fetch + realtime (UPDATE + INSERT)
+│   ├── useEventDetail.ts       # Event + updates fetch + realtime
+│   ├── useUserSignal.ts        # Single-event signal fetch + upsert (EventDetailScreen)
+│   ├── useUserSignals.ts       # Bulk signal fetch for all events (EventListScreen, one query)
+│   ├── useUserPreferences.ts   # Fetch + upsert user_preferences row (theme)
+│   ├── useEventFollow.ts       # Follow/unfollow toggle for a single event (optimistic)
+│   ├── useRisingEvents.ts      # Rising feed via get_rising_events RPC (follow-count driven)
+│   └── useSearch.ts            # Debounced search via search_events RPC (title + content)
 ├── screens/
 │   ├── SignInScreen.tsx
 │   ├── EventListScreen.tsx
-│   └── EventDetailScreen.tsx
+│   ├── EventDetailScreen.tsx
+│   └── SettingsScreen.tsx       # Theme picker (System/Light/Dark) + Sign Out
 ├── services/
 │   └── signalService.ts     # castSignal(userId, eventId, type) — upsert only (trigger handles score)
 └── types/
-    ├── index.ts             # DB types: Event, EventUpdate, Signal, User
+    ├── index.ts             # DB types: Event, EventUpdate, Signal, User, UserPreferences, ThemePreference
     └── navigation.ts        # RootStackParamList
 
 supabase/
@@ -224,7 +256,12 @@ supabase/
 │   ├── 014_case_insensitive_dedup.sql
 │   ├── 015_reconciliation_functions.sql
 │   ├── 016_compute_trust_score_formula.sql
-│   └── 017_drop_signals_delete_own.sql
+│   ├── 017_drop_signals_delete_own.sql
+│   ├── 018_user_preferences.sql
+│   ├── 019_event_follows.sql
+│   ├── 020_get_rising_events.sql
+│   ├── 021_search_events.sql
+│   └── 022_fts_search_updates.sql
 ├── ingestion/                     # V1 ingestion pipeline (adapter → normalize → write)
 │   ├── types.ts                   # RawSourceItem, NormalizedEvent, SourceAdapter, IngestionResult
 │   ├── client.ts                  # createIngestionClient() — service_role Supabase client
@@ -273,7 +310,9 @@ Three-state conditional render:
 |---|---|
 | `loading === true` | Branded splash screen (IRIS wordmark + muted spinner) |
 | `userId === null` | `SignInScreen` (outside navigator) |
-| `userId` set | `NavigationContainer` + stack |
+| `userId` set | `ThemeProvider` → `ThemedApp` → `NavigationContainer` + stack |
+
+`ThemeProvider` is only mounted when authenticated — preferences are per-user. `ThemedApp` calls `useTheme()` to get the resolved navigation theme and status bar style, then renders the `NavigationContainer` and the full stack.
 
 ### Sign In / Sign Up
 
@@ -285,7 +324,8 @@ Three-state conditional render:
 
 ### Sign Out
 
-- Header button on both Event List and Event Detail screens
+- Header button on Event List screen (alongside ⚙ settings icon) and Event Detail screen
+- Also available in the Settings screen (Account section)
 - Calls `supabase.auth.signOut()`
 - `onAuthStateChange` fires → `userId` becomes null → app returns to `SignInScreen`
 
@@ -390,7 +430,132 @@ Used only by `EventDetailScreen` (single-event context).
 
 ---
 
-## 12. UI Structure
+## 12. User Preferences
+
+### `useUserPreferences(userId)`
+
+Low-level hook. Reads and writes the current user's `user_preferences` row directly. Most components should use `useTheme()` instead (see below).
+
+- **Fetch:** single `.maybeSingle()` query on mount; `loading` starts `true` immediately when `userId` is known
+- **Update:** `updateTheme(theme)` — optimistic update, then upserts `{ user_id, theme, updated_at }` with `onConflict: 'user_id'`; on failure, re-fetches DB state to revert to ground truth
+- **Unauthenticated:** returns `preferences: null`, `updateTheme` is a no-op
+- **Auto-row:** every authenticated user has a preferences row created by `handle_new_user` on signup (default `theme: 'system'`); the insert policy allows a bootstrap upsert for accounts that predate migration 018
+
+**No RPC needed.** Direct `supabase.from('user_preferences')` access is safe because RLS restricts reads and writes to the authenticated user's own row.
+
+### `ThemeProvider` + `useTheme()`
+
+`ThemeContext` wraps the authenticated navigation stack in `App.tsx`.
+
+- Reads from `useUserPreferences(userId)` internally
+- Resolves `'system'` preference via `useColorScheme()` (falls back to `'dark'` when device scheme is unavailable)
+- Exposes `{ preference, resolvedScheme, navTheme, updateTheme, loading }`
+- `navTheme` is passed directly to `<NavigationContainer theme={navTheme}>` — navigation chrome adapts automatically
+- `StatusBar` style in `ThemedApp` is reactive: `'light'` (white icons) for dark scheme, `'dark'` (black icons) for light scheme
+
+**Consuming theme in a screen:**
+```ts
+const { preference, resolvedScheme, updateTheme } = useTheme();
+// resolvedScheme is always 'light' | 'dark' — safe for style decisions
+```
+
+### Settings Screen
+
+`SettingsScreen` is accessible via the ⚙ icon in the `EventList` header.
+
+- **Appearance section:** radio-style rows for System / Light / Dark; calls `updateTheme()` on tap
+- **Account section:** Sign Out button
+- Styles adapt to the current `resolvedScheme` — the screen correctly re-renders when the user changes their theme
+
+### Feed Support Boundaries
+
+`user_preferences` stores UI state only. The following are explicitly **not** implemented and are **not** planned as extensions of this table:
+
+| Feature | Status |
+|---|---|
+| "For You" feed | Not implemented — no infrastructure added |
+| Content personalization | Not implemented — feed order is not preference-driven |
+| Recommendation algorithm | Not implemented |
+| Behavioral tracking | Not implemented |
+| Source preference / weighting | Not implemented |
+
+Any future feed personalization feature would require a separate design decision and a new migration. The `user_preferences` table will not be repurposed for that.
+
+---
+
+## 13. Event Follows
+
+### `useEventFollow(eventId, userId)`
+
+Manages the follow state for a single event + authenticated user pair.
+
+- **Fetch:** on mount, queries `event_follows` for the `(user_id, event_id)` pair via `.maybeSingle()`; `loading` starts `true` immediately when `userId` is known (avoids flash)
+- **Toggle:** `toggle()` — optimistic update then INSERT (follow) or DELETE (unfollow); reverts on failure
+- **Unauthenticated:** `isFollowing: null`, `toggle` is a no-op guard
+- Returns: `{ isFollowing: boolean | null, loading, toggling, error, toggle }`
+
+### Server-side mechanics
+
+- `event_follows` table: composite PK `(user_id, event_id)`, both FKs `ON DELETE CASCADE`
+- `sync_follow_count()` SECURITY DEFINER trigger (AFTER INSERT OR DELETE) maintains `events.follow_count` — same pattern as `sync_source_count`
+- `idx_events_follow_count DESC` index makes the Rising feed ORDER BY fast
+
+### RLS Summary
+
+| Operation | Who | Policy |
+|---|---|---|
+| SELECT | authenticated (own rows) | `follows_read_own` permissive |
+| INSERT | authenticated (own row) | `follows_insert_own` permissive |
+| DELETE | authenticated (own row) | `follows_delete_own` permissive |
+| UPDATE | authenticated | `deny_follows_update` RESTRICTIVE (blocks row hijacking) |
+| ALL | anon | `deny_follows_anon` RESTRICTIVE |
+
+---
+
+## 14. Rising Feed and Search
+
+### Rising Feed — `useRisingEvents(limit?)`
+
+Calls `get_rising_events(p_limit)` RPC. Returns `{ events, loading, error, refetch }`.
+
+**Ranking formula (server-side):**
+```
+rising_score = (follow_count × 10) + status_bonus + (trust_score ÷ 10)
+               where status_bonus: developing = 20, emerging = 10
+```
+
+- **follow_count dominates**: 1 follower (+10 pts) exceeds the maximum status+trust bonus (30 pts) once `follow_count ≥ 4`. An event with zero followers cannot outrank a followed event of equal or lower status.
+- **Status is secondary**: `developing` outranks `emerging` at equal follow counts because the story has grown beyond a first report.
+- **Trust score is a tertiary tie-breaker**: at equal follow count and status, higher credibility ranks first.
+- **Scope**: `emerging` and `developing` only — `verified` and `disputed` are resolved stories, not rising.
+- **Limit**: default 20, clamped 1–100.
+- **Security**: SECURITY INVOKER — runs as the calling role; standard events RLS applies. No REVOKE (same visibility as the events table).
+
+### Search — `useSearch(debounceMs?)`
+
+Calls `search_events(p_query, p_limit)` RPC. Returns `{ results, searching, error, query, setQuery, clearResults }`.
+
+- Debounce: 300 ms default; fires only when `query.trim().length ≥ 2`
+- Cancellation: local closure variable per effect invocation — stale responses from prior queries are discarded even if they complete after the new query starts
+- **Server-side ranking**: title match ranks above content-only match; within each bucket, newest first
+- **Matches**: `lower(title) ILIKE '%query%'` OR `EXISTS` on `event_updates.content` / `source_name`
+- `idx_events_title_lower` index on `lower(title)` supports prefix queries
+- **Known limitation**: leading-wildcard ILIKE requires sequential scan for content matches. Acceptable at MVP event counts; pg_trgm or tsvector needed for scale.
+- **Security**: SECURITY INVOKER; same events + event_updates RLS visibility as direct table queries.
+
+### Full-Text Search — `search_event_updates(query)` (migration 022)
+
+GIN-indexed full-text search over `event_updates.content` and `source_name` via `websearch_to_tsquery`. SECURITY INVOKER, STABLE.
+
+- GIN index `idx_event_updates_fts` on `to_tsvector(content || source_name)` — no sequential scan needed
+- GIN index `idx_events_fts` on `to_tsvector(title)` — for future title FTS queries
+- `websearch_to_tsquery`: handles unbalanced quotes, boolean operators, stop words safely
+- Ranked by `ts_rank`, then `created_at DESC`
+- Additive on top of 021's ILIKE `search_events` — both approaches coexist; callers choose based on query complexity
+
+---
+
+## 15. UI Structure
 
 ### Event List Screen
 
@@ -404,7 +569,7 @@ Used only by `EventDetailScreen` (single-event context).
 Each card: title, colored status badge (colored border + text + subtle background tint), trust score bar (color-coded: green ≥67 / orange ≥34 / red <34), Confirm/Dispute signal buttons.  
 Signal buttons: semantic color system — idle state uses colored border + colored text (green for Confirm, red for Dispute); active state uses filled background + white text; submitting state shows white spinner on colored fill.  
 Vote state seeded from `useUserSignals` bulk fetch (one query for all cards); selected button fills solid, unselected fades (opacity 0.35).  
-Pull-to-refresh supported. Header: IRIS wordmark (letter-spaced) + Sign Out button.
+Pull-to-refresh supported. Header: IRIS wordmark (letter-spaced) + ⚙ settings icon + Sign Out button.
 
 ### Event Detail Screen
 
@@ -431,7 +596,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 13. Error Handling
+## 16. Error Handling
 
 - Raw DB / Supabase error messages are never shown to users
 - User-facing messages: `"Unable to load events"`, `"Unable to load event"`, `"Could not save signal. Please try again."`
@@ -440,7 +605,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 14. Performance Decisions
+## 17. Performance Decisions
 
 - No refetch after signal submission — realtime is the sync mechanism
 - `Promise.all` for parallel event + updates fetch
@@ -451,7 +616,7 @@ Inline error shown below buttons on submission failure.
 
 ---
 
-## 15. Environment Config
+## 18. Environment Config
 
 ### Client (mobile app)
 ```
@@ -471,7 +636,7 @@ Supabase Dashboard → Project Settings → API
 
 ---
 
-## 16. TypeScript
+## 19. TypeScript
 
 - `strict: true` enabled in `tsconfig.json`
 - `noUncheckedIndexedAccess` not enabled
@@ -480,7 +645,7 @@ Supabase Dashboard → Project Settings → API
 
 ---
 
-## 17. Setup
+## 20. Setup
 
 **1. Install dependencies**
 ```bash
@@ -512,6 +677,11 @@ supabase/migrations/014_case_insensitive_dedup.sql
 supabase/migrations/015_reconciliation_functions.sql
 supabase/migrations/016_compute_trust_score_formula.sql
 supabase/migrations/017_drop_signals_delete_own.sql
+supabase/migrations/018_user_preferences.sql
+supabase/migrations/019_event_follows.sql
+supabase/migrations/020_get_rising_events.sql
+supabase/migrations/021_search_events.sql
+supabase/migrations/022_fts_search_updates.sql
 ```
 
 **4a. Verify schema** (optional — confirms all migrations applied correctly)
@@ -556,7 +726,7 @@ npx expo start
 
 ---
 
-## 18. Current System State
+## 21. Current System State
 
 ### Implemented
 
@@ -607,11 +777,19 @@ npx expo start
   - `recalculate_trust_score`, `ingest_event`, `reconcile_source_counts`, `reconcile_trust_scores`, `compute_trust_score` all REVOKED from PUBLIC, GRANT to service_role only (migrations 009, 011–016)
   - All SECURITY DEFINER functions have SET search_path=public (migrations 006, 008, 009, 011–016)
   - Source_count trigger hardened to SECURITY DEFINER; dead function `increment_source_count` removed (migration 008)
-- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, and signal permissive policy ownership (001–017)
+- Schema verification script: `supabase/scripts/verify_db.sql` — read-only SQL verifying RLS, RESTRICTIVE policy expressions, SECURITY DEFINER functions, trigger timing/events, EXECUTE grants, CHECK constraints, functional indexes, signal permissive policy ownership, user_preferences table integrity, event_follows table integrity, public RPC accessibility, GIN FTS index presence, and search_event_updates function (001–022)
+- User preferences backend (migration 018): `user_preferences` table — theme preference (`system` | `light` | `dark`), auto-created on signup via `handle_new_user` trigger, RLS own-row read/update, RESTRICTIVE anon deny + RESTRICTIVE delete deny; `useUserPreferences(userId)` hook — fetch + optimistic upsert + revert on failure
+- Theme preference applied to the navigation chrome: `ThemeContext` (`src/context/ThemeContext.tsx`) resolves `user_preferences.theme` using `useColorScheme()` for `'system'`; `navTheme` wired into `<NavigationContainer>` so headers/tabs adapt; `StatusBar` style reactive to resolved scheme
+- Settings screen (`src/screens/SettingsScreen.tsx`): theme picker (System / Light / Dark) with radio-style selection; Account section with Sign Out; styles adapt to resolved scheme so the screen remains legible after a theme change; accessible via ⚙ icon in EventList header
+- Event follows backend (migration 019): `event_follows` table (composite PK, both FKs CASCADE), `events.follow_count` denormalized counter maintained by `sync_follow_count` SECURITY DEFINER trigger; RLS own-row read/insert/delete; RESTRICTIVE anon deny + RESTRICTIVE update deny; `useEventFollow(eventId, userId)` hook — fetch + optimistic toggle with revert
+- Rising feed RPC (migration 020): `get_rising_events(p_limit)` — SECURITY INVOKER, STABLE; emerging+developing only; ranking: `(follow_count × 10) + status_bonus + (trust_score ÷ 10)`; follow_count dominates; `idx_events_follow_count DESC` index; `useRisingEvents(limit)` hook
+- Search RPC (migration 021): `search_events(p_query, p_limit)` — SECURITY INVOKER, STABLE; title ILIKE + EXISTS content/source_name match; ranked by title-match bucket then created_at DESC; 2-char minimum; `idx_events_title_lower` functional index; `useSearch(debounceMs)` hook — debounced 300ms, per-closure cancellation (stale responses discarded)
+- GIN full-text search indexes + `search_event_updates` RPC (migration 022): `idx_events_fts` and `idx_event_updates_fts` GIN indexes on `to_tsvector` for events.title and event_updates content/source_name; `search_event_updates(query)` SECURITY INVOKER RPC uses `websearch_to_tsquery` for multi-word and boolean queries, ranked by `ts_rank`; additive on top of 021's ILIKE approach
 
 ### Not Implemented
 
 - Session persistence across restarts (disabled for Expo Go; re-enable SecureStoreAdapter + `persistSession: true` in `supabase.ts` for production EAS builds)
+- Full light-theme screen styles: `ThemeContext` drives the navigation chrome and `SettingsScreen`; all other screen `StyleSheet` objects use hardcoded dark colors. A complete light-theme pass would update all screen backgrounds, text, and component colors — deferred pending product decision on light-theme support
 - Offline / no-connection indicator
 - Push notifications
 - Rate limiting / abuse protection
@@ -619,3 +797,4 @@ npx expo start
 - Reputation or source weighting
 - Automated moderation
 - Analytics
+- "For You" feed / personalized content ranking — explicitly deferred; `user_preferences` table is not designed to support this and will not be extended for it without a separate design decision

@@ -1,20 +1,58 @@
-import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { SignInScreen } from './src/screens/SignInScreen';
 import type { RootStackParamList } from './src/types/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 /**
- * AppContent renders the auth-gated navigation tree.
- * It consumes auth state from AuthContext — no new Supabase subscription.
+ * ThemedApp renders the navigation stack using the resolved theme from
+ * ThemeContext. Separate from AppContent so useTheme() can be called inside
+ * the ThemeProvider that wraps it.
+ */
+function ThemedApp() {
+  const { navTheme, resolvedScheme } = useTheme();
+  return (
+    <ErrorBoundary>
+      <NavigationContainer theme={navTheme}>
+        <StatusBar style={resolvedScheme === 'dark' ? 'light' : 'dark'} />
+        <Stack.Navigator>
+          <Stack.Screen
+            name="EventList"
+            component={EventListScreen}
+            options={{
+              title: 'IRIS',
+              headerTitleStyle: styles.navTitle,
+            }}
+          />
+          <Stack.Screen
+            name="EventDetail"
+            component={EventDetailScreen}
+            options={{ title: 'Event Detail' }}
+          />
+          <Stack.Screen
+            name="Settings"
+            component={SettingsScreen}
+            options={{ title: 'Settings' }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </ErrorBoundary>
+  );
+}
+
+/**
+ * AppContent gates on auth state, then provides ThemeContext to the stack.
+ * ThemeProvider is only mounted when authenticated — preferences are per-user.
  */
 function AppContent() {
   const { userId, loading } = useAuth();
@@ -41,26 +79,9 @@ function AppContent() {
   }
 
   return (
-    <ErrorBoundary>
-      <NavigationContainer theme={DarkTheme}>
-        <StatusBar style="light" />
-        <Stack.Navigator>
-          <Stack.Screen
-            name="EventList"
-            component={EventListScreen}
-            options={{
-              title: 'IRIS',
-              headerTitleStyle: styles.navTitle,
-            }}
-          />
-          <Stack.Screen
-            name="EventDetail"
-            component={EventDetailScreen}
-            options={{ title: 'Event Detail' }}
-          />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </ErrorBoundary>
+    <ThemeProvider userId={userId}>
+      <ThemedApp />
+    </ThemeProvider>
   );
 }
 
