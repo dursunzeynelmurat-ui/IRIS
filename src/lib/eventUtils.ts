@@ -11,7 +11,7 @@ export const STATUS_LABEL: Record<EventStatus, string> = {
   disputed:   'Disputed',
 };
 
-/** Status colors for dark backgrounds. All values pass 4.5:1 contrast on #0d0d0d / #1c1c1e. */
+/** Status colors for dark backgrounds. Pass 4.5:1+ contrast on #0d0d0d / #1c1c1e. */
 export const STATUS_COLOR_DARK: Record<EventStatus, string> = {
   emerging:   '#ff9f0a',
   developing: '#0a84ff',
@@ -35,8 +35,8 @@ export const STATUS_COLOR_LIGHT: Record<EventStatus, string> = {
 };
 
 /**
- * Returns the correct status color map for the given theme.
- * Use inside a component: `statusColors(useTheme().resolved)[event.status]`
+ * Returns the correct status color map for the given resolved theme.
+ * Usage: `statusColors(resolved)[event.status]`
  */
 export function statusColors(
   resolved: 'light' | 'dark',
@@ -44,8 +44,8 @@ export function statusColors(
   return resolved === 'light' ? STATUS_COLOR_LIGHT : STATUS_COLOR_DARK;
 }
 
-// Backward-compatible alias — used in legacy callsites that don't yet pass a theme.
-// Prefers dark values (safe default — the app launched dark-only).
+// Backward-compatible alias — consumed by any code that hasn't migrated yet.
+// Always returns dark values (the original set).
 export const STATUS_COLOR = STATUS_COLOR_DARK;
 
 // ── Score color ───────────────────────────────────────────────
@@ -57,8 +57,6 @@ export const STATUS_COLOR = STATUS_COLOR_DARK;
  *   high  #1e7a30 → 5.3:1
  *   mid   #b25000 → 5.2:1
  *   low   #c01428 → 6.3:1
- *
- * Dark-mode values are calibrated for contrast on #0d0d0d / #1c1c1e.
  */
 export function scoreColor(score: number, resolved: 'light' | 'dark' = 'dark'): string {
   if (resolved === 'light') {

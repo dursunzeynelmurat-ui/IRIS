@@ -1,139 +1,141 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useTheme } from '../context/ThemeContext';
-import { supabase } from '../lib/supabase';
-import type { ThemePreference } from '../types';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useTheme, type ThemePreference } from '../context/ThemeContext';
+import type { RootStackParamList } from '../types/navigation';
 
-// ── Theme options ──────────────────────────────────────────────
+type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
-const THEME_OPTIONS: { value: ThemePreference; label: string; description: string }[] = [
+interface ThemeOption {
+  value: ThemePreference;
+  label: string;
+  description: string;
+}
+
+const THEME_OPTIONS: ThemeOption[] = [
   { value: 'system', label: 'System', description: 'Follows your device setting' },
-  { value: 'light',  label: 'Light',  description: 'Always light'                },
-  { value: 'dark',   label: 'Dark',   description: 'Always dark'                 },
+  { value: 'light',  label: 'Light',  description: 'Always use light appearance' },
+  { value: 'dark',   label: 'Dark',   description: 'Always use dark appearance' },
 ];
 
-// ── Screen ──────────────────────────────────────────────────────
+// StatusBar is NOT rendered here — App.tsx already renders one StatusBar for
+// the entire NavigationContainer tree. Deep screens inherit that setting.
 
-export function SettingsScreen() {
-  const { preference, resolvedScheme, updateTheme, loading } = useTheme();
-
-  const isDark = resolvedScheme === 'dark';
-  const c = isDark ? DARK : LIGHT;
+export function SettingsScreen(_: Props) {
+  const { preference, setPreference, colors } = useTheme();
 
   return (
-    <View style={[styles.container, { backgroundColor: c.background }]}>
+    <View style={[styles.screen, { backgroundColor: colors.bg }]}>
+      <Text style={[styles.sectionLabel, { color: colors.textTertiary }]}>
+        APPEARANCE
+      </Text>
 
-      {/* ── Appearance ──────────────────────────────────────── */}
-      <Text style={[styles.sectionLabel, { color: c.secondary }]}>APPEARANCE</Text>
-      <View style={[styles.section, { backgroundColor: c.surface, borderColor: c.border }]}>
-        {THEME_OPTIONS.map(({ value, label, description }, index) => {
+      <View
+        style={[styles.group, { backgroundColor: colors.bgElevated }]}
+        accessibilityRole="radiogroup"
+      >
+        {THEME_OPTIONS.map(({ value, label, description }, idx) => {
           const isSelected = preference === value;
-          const isLast = index === THEME_OPTIONS.length - 1;
+          const isLast = idx === THEME_OPTIONS.length - 1;
+
           return (
             <TouchableOpacity
               key={value}
               style={[
                 styles.row,
-                !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
+                !isLast && {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.border,
+                },
               ]}
-              onPress={() => updateTheme(value)}
+              onPress={() => setPreference(value)}
               activeOpacity={0.7}
-              disabled={loading}
               accessibilityRole="radio"
-              accessibilityState={{ checked: isSelected, disabled: loading }}
-              accessibilityLabel={`${label} theme: ${description}`}
+              accessibilityLabel={label}
+              accessibilityHint={description}
+              accessibilityState={{ checked: isSelected }}
             >
-              <View style={styles.rowLeft}>
-                <Text style={[styles.rowLabel, { color: c.label }]}>{label}</Text>
-                <Text style={[styles.rowDescription, { color: c.secondary }]}>{description}</Text>
+              {/* Radio indicator */}
+              <View
+                style={[
+                  styles.radio,
+                  {
+                    borderColor: isSelected ? colors.iris : colors.borderStrong,
+                  },
+                ]}
+              >
+                {isSelected && (
+                  <View style={[styles.radioFill, { backgroundColor: colors.iris }]} />
+                )}
               </View>
-              {isSelected && (
-                <Text style={[styles.checkmark, { color: c.accent }]}>✓</Text>
-              )}
+
+              <View style={styles.labelGroup}>
+                <Text style={[styles.optionLabel, { color: colors.textPrimary }]}>
+                  {label}
+                </Text>
+                <Text style={[styles.optionDesc, { color: colors.textTertiary }]}>
+                  {description}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
       </View>
-
-      {/* ── Account ─────────────────────────────────────────── */}
-      <Text style={[styles.sectionLabel, { color: c.secondary }]}>ACCOUNT</Text>
-      <View style={[styles.section, { backgroundColor: c.surface, borderColor: c.border }]}>
-        <TouchableOpacity
-          style={styles.row}
-          onPress={() => supabase.auth.signOut()}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <Text style={[styles.rowLabel, { color: c.danger }]}>Sign Out</Text>
-        </TouchableOpacity>
-      </View>
-
     </View>
   );
 }
 
-// ── Color palettes ───────────────────────────────────────────────
-
-const DARK = {
-  background: '#0d0d0d',
-  surface:    '#1c1c1e',
-  label:      '#f2f2f2',
-  secondary:  '#8e8e93',
-  border:     '#2c2c2e',
-  accent:     '#0a84ff',
-  danger:     '#ff453a',
-};
-
-const LIGHT = {
-  background: '#f2f2f7',
-  surface:    '#ffffff',
-  label:      '#1c1c1e',
-  secondary:  '#6c6c70',
-  border:     '#d1d1d6',
-  accent:     '#007aff',
-  danger:     '#ff3b30',
-};
-
-// ── Styles ────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    paddingTop: 24,
+    paddingTop: 20,
   },
+
   sectionLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
     paddingHorizontal: 20,
     paddingBottom: 8,
   },
-  section: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    marginBottom: 32,
+
+  group: {
+    marginBottom: 28,
   },
+
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 14,
-    minHeight: 52,
+    gap: 14,
+    minHeight: 56,
   },
-  rowLeft: {
+
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  radioFill: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+
+  labelGroup: {
     flex: 1,
     gap: 2,
   },
-  rowLabel: {
-    fontSize: 16,
+  optionLabel: {
+    fontSize: 15,
     fontWeight: '400',
   },
-  rowDescription: {
-    fontSize: 13,
-  },
-  checkmark: {
-    fontSize: 17,
-    fontWeight: '600',
-    marginLeft: 12,
+  optionDesc: {
+    fontSize: 12,
   },
 });

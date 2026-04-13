@@ -1,49 +1,62 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Event } from '../types';
+import { Event } from '../types';
 
-interface UseRisingEventsResult {
+export interface RisingEventsResult {
   events: Event[];
-  loading: boolean;
+  loading: boolean;     // true only on the initial fetch (full-tab spinner)
+  refreshing: boolean;  // true during pull-to-refresh (FlatList spinner)
   error: string | null;
   refetch: () => void;
 }
 
 /**
- * Fetches the Rising feed via the get_rising_events RPC.
+ * Backend-driven rising events via the get_rising_events RPC.
  *
- * Ranking (server-side): (follow_count * 10) + status_bonus + (trust_score / 10)
- * Only emerging + developing events are included.
+ * Rising is scored server-side:
+ *   follow_count × 10 + status_bonus + trust_score / 10
+ *
+ * The server formula means the Rising tab reflects real engagement
+ * (source coverage, user signals, follows) rather than a client-side heuristic.
+ *
+ * On pull-to-refresh, stale data is kept visible until the new response
+ * arrives so the tab never flashes empty.
  */
-export function useRisingEvents(limit = 20): UseRisingEventsResult {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+export function useRisingEvents(): RisingEventsResult {
+  const [events, setEvents]         = useState<Event[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const initialLoad                 = useRef(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const fetchRising = useCallback(async () => {
+    if (initialLoad.current) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setError(null);
 
-    supabase
-      .rpc('get_rising_events', { p_limit: limit })
-      .then(({ data, error: err }) => {
-        if (cancelled) return;
-        if (err) {
-          setError(err.message);
-        } else {
-          setEvents((data as Event[]) ?? []);
-        }
-        setLoading(false);
-      });
+    const { data, error: rpcError } = await supabase.rpc('get_rising_events', {
+      p_limit: 100,
+    });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [limit, tick]);
+    if (rpcError) {
+      setError('Unable to load rising events.');
+      // Keep stale events visible on refresh failure; clear only on initial load.
+      if (initialLoad.current) setEvents([]);
+    } else {
+      setEvents((data as Event[]) ?? []);
+    }
 
-  const refetch = useCallback(() => setTick((t) => t + 1), []);
+    setLoading(false);
+    setRefreshing(false);
+    initialLoad.current = false;
+  }, []);
 
-  return { events, loading, error, refetch };
+  useEffect(() => {
+    fetchRising();
+  }, [fetchRising]);
+
+  return { events, loading, refreshing, error, refetch: fetchRising };
 }
