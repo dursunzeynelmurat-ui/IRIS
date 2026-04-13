@@ -15,7 +15,7 @@ import { BottomTabBar } from '../components/BottomTabBar';
 import { EventCard } from '../components/EventCard';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
-import { useEventSearch } from '../hooks/useEventSearch';
+import { MIN_QUERY_LEN, useEventSearch } from '../hooks/useEventSearch';
 import { useEvents } from '../hooks/useEvents';
 import { useRisingEvents } from '../hooks/useRisingEvents';
 import { useUserSignals } from '../hooks/useUserSignals';
@@ -39,7 +39,9 @@ const TABS: Tab[] = [
   { key: 'rising',   label: 'Rising'   },
 ];
 
-// ── Tab filtering logic ───────────────────────────────────────
+// ── Tab filtering — New and Verified only ─────────────────────
+// Rising is backend-driven (useRisingEvents). New/Verified derive
+// from the live events feed without an extra network call.
 
 function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] {
   switch (tab) {
@@ -52,44 +54,38 @@ function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] 
   }
 }
 
-// ── Empty state messages ──────────────────────────────────────
-
-function emptyMessage(tab: FeedTab, isSearching: boolean, query: string): string {
-  if (isSearching) {
-    return `No events match "${query.trim()}".`;
-  }
-  switch (tab) {
-    case 'new':      return 'No events yet.';
-    case 'verified': return 'No verified events yet.';
-    case 'rising':   return 'Nothing developing yet.';
-  }
-}
-
-function emptyHint(tab: FeedTab, isSearching: boolean): string {
-  if (isSearching) return 'Try a different keyword.';
-  switch (tab) {
-    case 'new':      return 'Pull down to refresh.';
-    case 'verified': return 'Verified events appear here once confirmed.';
-    case 'rising':   return 'Emerging and developing stories appear here.';
-  }
-}
-
 // ── Screen ────────────────────────────────────────────────────
 
 export function EventListScreen({ navigation }: Props) {
-  const { events, loading, refreshing, error, refetch } = useEvents();
-  const { userId } = useAuth();
-  const { signalMap, setSignal } = useUserSignals(userId);
-  const { colors } = useTheme();
+  const { events, loading, refreshing, error, refetch }                        = useEvents();
+  const { userId }                                                               = useAuth();
+  const { signalMap, setSignal }                                                 = useUserSignals(userId);
+  const { colors }                                                               = useTheme();
 
   const [activeTab, setActiveTab] = useState<FeedTab>('new');
 
-  const { query: searchQuery, setQuery: setSearchQuery, results: searchResults, isSearching, clearQuery: clearSearch } = useEventSearch(events);
-  const { events: risingEvents } = useRisingEvents(events);
+  const {
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    results: searchResults,
+    isSearching,
+    loading: searchLoading,
+    error: searchError,
+    clearQuery: clearSearch,
+  } = useEventSearch();
 
-  // When searching, show matching events from the entire corpus, newest first.
-  // When not searching, apply the active tab's filter.
-  const displayed = isSearching
+  const {
+    events: risingEvents,
+    loading: risingLoading,
+    refreshing: risingRefreshing,
+    error: risingError,
+    refetch: refetchRising,
+  } = useRisingEvents();
+
+  // ── Displayed data ────────────────────────────────────────────
+  // Search overrides tabs. Rising is served by the backend hook.
+  // New/Verified derive from the live feed.
+  const displayed: Event[] = isSearching
     ? searchResults
     : activeTab === 'rising'
       ? risingEvents
@@ -102,11 +98,13 @@ export function EventListScreen({ navigation }: Props) {
 
   function handleTabPress(key: FeedTab) {
     if (isSearching) {
-      // Tapping a tab while searching clears the search and switches tab.
+      // Tapping a tab while searching clears search and switches tab.
       handleClearSearch();
     }
     setActiveTab(key);
   }
+
+  // ── Full-screen states ────────────────────────────────────────
 
   if (loading) {
     return (
@@ -136,8 +134,111 @@ export function EventListScreen({ navigation }: Props) {
   }
 
   // ── Search bar color tokens ────────────────────────────────────
-  // bgInput resolves to bgElevated in dark and white in light — both themes handled.
+  // bgInput is bgElevated in dark and white in light — correct for both themes.
   const inputBorder = isSearching ? colors.iris + '60' : colors.border;
+
+  // ── Empty / loading state for the list area ───────────────────
+  function renderEmpty() {
+    if (isSearching) {
+      // Loading: first search, results not yet arrived.
+      if (searchLoading) {
+        return (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          </View>
+        );
+      }
+      // Backend error.
+      if (searchError) {
+        return (
+          <View style={styles.emptyContainer}>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              Search unavailable.
+            </Text>
+            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+              Check your connection and try again.
+            </Text>
+          </View>
+        );
+      }
+      // Query too short — hasn't been sent yet.
+      if (searchQuery.trim().length < MIN_QUERY_LEN) {
+        return (
+          <View style={styles.emptyContainer}>
+            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+              Type at least 2 characters to search.
+            </Text>
+          </View>
+        );
+      }
+      // Sent and returned empty.
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            No events match "{searchQuery.trim()}".
+          </Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+            Try a different keyword.
+          </Text>
+        </View>
+      );
+    }
+
+    if (activeTab === 'rising') {
+      if (risingLoading) {
+        return (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          </View>
+        );
+      }
+      if (risingError) {
+        return (
+          <View style={styles.emptyContainer}>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              Unable to load rising events.
+            </Text>
+            <TouchableOpacity
+              style={[styles.retryBtn, { borderColor: colors.borderStrong, marginTop: 12 }]}
+              onPress={refetchRising}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading rising events"
+            >
+              <Text style={[styles.retryText, { color: colors.textPrimary }]}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            Nothing developing yet.
+          </Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+            Stories gain momentum from source coverage, trust signals, and engagement.
+          </Text>
+        </View>
+      );
+    }
+
+    // New / Verified tabs.
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          {activeTab === 'new' ? 'No events yet.' : 'No verified events yet.'}
+        </Text>
+        <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+          {activeTab === 'new'
+            ? 'Pull down to refresh.'
+            : 'Verified events appear here once confirmed.'}
+        </Text>
+      </View>
+    );
+  }
+
+  // RefreshControl: for the Rising tab, pull-to-refresh re-fetches rising data.
+  const isRisingActive = activeTab === 'rising' && !isSearching;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -162,21 +263,26 @@ export function EventListScreen({ navigation }: Props) {
             placeholder="Search events…"
             placeholderTextColor={colors.textTertiary}
             returnKeyType="search"
-            clearButtonMode="never"   // we draw our own clear button
+            clearButtonMode="never"
             autoCorrect={false}
             autoCapitalize="none"
             accessibilityLabel="Search events"
-            accessibilityHint="Filters the event list by keyword"
+            accessibilityHint="Searches events via backend"
           />
+          {/* Loading spinner replaces clear button while a search request is in-flight. */}
           {isSearching && (
-            <TouchableOpacity
-              onPress={handleClearSearch}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-            >
-              <Text style={[styles.clearIcon, { color: colors.textTertiary }]}>✕</Text>
-            </TouchableOpacity>
+            searchLoading ? (
+              <ActivityIndicator size="small" color={colors.textTertiary} />
+            ) : (
+              <TouchableOpacity
+                onPress={handleClearSearch}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+              >
+                <Text style={[styles.clearIcon, { color: colors.textTertiary }]}>✕</Text>
+              </TouchableOpacity>
+            )
           )}
         </View>
       </View>
@@ -248,21 +354,12 @@ export function EventListScreen({ navigation }: Props) {
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refetch}
+            refreshing={isRisingActive ? risingRefreshing : refreshing}
+            onRefresh={isRisingActive ? refetchRising : refetch}
             tintColor={colors.textSecondary}
           />
         }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              {emptyMessage(activeTab, isSearching, searchQuery)}
-            </Text>
-            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-              {emptyHint(activeTab, isSearching)}
-            </Text>
-          </View>
-        }
+        ListEmptyComponent={renderEmpty()}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
 
@@ -296,13 +393,11 @@ const styles = StyleSheet.create({
   searchIcon: {
     fontSize: 16,
     lineHeight: 18,
-    // Slight vertical nudge so the lens glyph sits centered
     marginTop: -1,
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    // Nullify default RN text input padding on Android
     paddingVertical: 0,
   },
   clearIcon: {
@@ -358,7 +453,7 @@ const styles = StyleSheet.create({
     height: 10,
   },
 
-  // ── Empty state ──
+  // ── Empty / inline error ──
   emptyContainer: {
     alignItems: 'center',
     gap: 6,
@@ -371,9 +466,10 @@ const styles = StyleSheet.create({
   emptyHint: {
     fontSize: 13,
     textAlign: 'center',
+    maxWidth: 260,
   },
 
-  // ── Error state ──
+  // ── Full-screen error / inline retry ──
   errorText: {
     fontSize: 16,
     fontWeight: '600',
