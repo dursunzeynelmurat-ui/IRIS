@@ -80,17 +80,15 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 interface ThemeProviderProps {
   children: ReactNode;
   /**
-   * Backend-persisted preference. When provided, the provider syncs to it on
-   * mount and whenever it changes (e.g. after a successful preferences fetch).
-   *
-   * Integration: pass `userPrefs?.theme` from a useUserPreferences() hook.
+   * Backend-persisted preference from useUserPreferences(). When provided,
+   * the provider syncs to it on mount and whenever it changes (e.g. after
+   * the initial fetch resolves or the user signs in).
    */
   savedPreference?: ThemePreference;
   /**
    * Called whenever the user selects a new preference. The provider applies
-   * the change optimistically and reverts on failure.
-   *
-   * Integration: pass `updateTheme` from a useUserPreferences() hook.
+   * the change optimistically and reverts on failure (when this throws).
+   * Wired to useUserPreferences().updateTheme in ThemedApp.
    */
   onSavePreference?: (p: ThemePreference) => Promise<void>;
 }

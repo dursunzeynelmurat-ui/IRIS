@@ -7,6 +7,7 @@ import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
+import { useUserPreferences } from './src/hooks/useUserPreferences';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
@@ -122,24 +123,40 @@ function AppContent() {
 }
 
 /**
- * App is the true root. AuthProvider and ThemeProvider live here so they
- * each cover the entire component tree with a single subscription.
+ * ThemedApp sits inside AuthProvider so it can read userId, then wraps
+ * ThemeProvider with backend-backed preference props.
+ *
+ * Flow:
+ *   1. useUserPreferences fetches the stored preference from user_preferences
+ *      once userId is known.
+ *   2. ThemeProvider receives it as savedPreference and syncs immediately.
+ *   3. When the user changes their theme in Settings, ThemeProvider applies
+ *      the change optimistically and calls updateTheme to persist it. If the
+ *      write fails, ThemeProvider reverts the local preference automatically.
+ */
+function ThemedApp() {
+  const { userId } = useAuth();
+  const { theme, updateTheme } = useUserPreferences(userId);
+
+  return (
+    <ThemeProvider
+      savedPreference={theme}
+      onSavePreference={updateTheme}
+    >
+      <AppContent />
+    </ThemeProvider>
+  );
+}
+
+/**
+ * App is the true root. AuthProvider covers the entire tree so both
+ * ThemedApp (preference fetch) and AppContent (auth gating) share one
+ * auth subscription.
  */
 export default function App() {
   return (
     <AuthProvider>
-      {/*
-        Integration: wire backend persistence by passing optional props:
-          <ThemeProvider
-            savedPreference={userPrefs?.theme}
-            onSavePreference={updateTheme}
-          >
-        where userPrefs and updateTheme come from a useUserPreferences() hook
-        that reads/writes the user_preferences table via Supabase.
-      */}
-      <ThemeProvider>
-        <AppContent />
-      </ThemeProvider>
+      <ThemedApp />
     </AuthProvider>
   );
 }
