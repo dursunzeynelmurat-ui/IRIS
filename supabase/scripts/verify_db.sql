@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–022) to confirm expected state.
+-- Run after applying all migrations (001–024) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -16,7 +16,10 @@ SELECT
 FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relkind = 'r'
-  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
+  AND relname IN (
+    'events', 'event_updates', 'signals', 'users',
+    'user_preferences', 'event_follows', 'sources'
+  )
 ORDER BY relname;
 
 -- ── Section 2: All policies on core tables (informational) ────────────────
@@ -31,12 +34,15 @@ SELECT
   with_check
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
+  AND tablename IN (
+    'events', 'event_updates', 'signals', 'users',
+    'user_preferences', 'event_follows', 'sources'
+  )
 ORDER BY tablename, policyname;
 
--- ── Section 3: RESTRICTIVE deny policies — all 16 required ──────────────
+-- ── Section 3: RESTRICTIVE deny policies — all 19 required ──────────────
 --
--- After migrations 004, 005, 007, 010, 018, 019 the following RESTRICTIVE
+-- After migrations 004, 005, 007, 010, 018, 019, 023 the following RESTRICTIVE
 -- policies must exist. Any missing row = FAIL.
 
 WITH expected_restrictive AS (
@@ -62,7 +68,11 @@ WITH expected_restrictive AS (
     ('user_preferences',  'deny_prefs_delete'),
     -- migration 019
     ('event_follows',     'deny_follows_anon'),
-    ('event_follows',     'deny_follows_update')
+    ('event_follows',     'deny_follows_update'),
+    -- migration 023
+    ('sources',           'deny_sources_insert'),
+    ('sources',           'deny_sources_update'),
+    ('sources',           'deny_sources_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -103,11 +113,15 @@ WHERE n.nspname = 'public'
     'validate_signal_immutable_fields',
     'handle_new_user',
     'ingest_event',
-    'reconcile_source_counts',   -- migration 015
-    'reconcile_trust_scores',    -- migration 015
-    'compute_trust_score',       -- migration 016
-    'sync_follow_count',         -- migration 019
-    'toggle_event_follow'        -- migration 019 (SECURITY DEFINER, user-callable RPC)
+    'reconcile_source_counts',      -- migration 015
+    'reconcile_trust_scores',       -- migration 015 / 024 shim
+    'compute_trust_score',          -- migration 024 (composite formula)
+    'sync_follow_count',            -- migration 019
+    'toggle_event_follow',          -- migration 019 (user-callable RPC)
+    'compute_crowd_score',          -- migration 024
+    'compute_source_score',         -- migration 024
+    'recalculate_event_scores',     -- migration 024
+    'reconcile_event_scores'        -- migration 024
   )
 ORDER BY p.proname;
 
@@ -170,11 +184,15 @@ WHERE n.nspname = 'auth'
 -- implementation detail, not a public API endpoint.
 
 WITH checks AS (
-  SELECT 'recalculate_trust_score(uuid)'   AS fn UNION ALL
-  SELECT 'ingest_event(text,text,jsonb)'   UNION ALL
-  SELECT 'reconcile_source_counts()'       UNION ALL
-  SELECT 'reconcile_trust_scores()'        UNION ALL
-  SELECT 'compute_trust_score(integer,integer)'  -- migration 016
+  SELECT 'recalculate_trust_score(uuid)'         AS fn UNION ALL
+  SELECT 'ingest_event(text,text,jsonb)'              UNION ALL
+  SELECT 'reconcile_source_counts()'                  UNION ALL
+  SELECT 'reconcile_trust_scores()'                   UNION ALL
+  SELECT 'compute_trust_score(integer,integer)'       UNION ALL  -- migration 024 (composite)
+  SELECT 'compute_crowd_score(integer,integer)'       UNION ALL  -- migration 024
+  SELECT 'compute_source_score(uuid)'                 UNION ALL  -- migration 024
+  SELECT 'recalculate_event_scores(uuid)'             UNION ALL  -- migration 024
+  SELECT 'reconcile_event_scores()'                              -- migration 024
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -260,7 +278,11 @@ WITH deny_policies AS (
     ('user_preferences',  'deny_prefs_anon'),
     ('user_preferences',  'deny_prefs_delete'),
     ('event_follows',     'deny_follows_anon'),
-    ('event_follows',     'deny_follows_update')
+    ('event_follows',     'deny_follows_update'),
+    -- migration 023
+    ('sources',           'deny_sources_insert'),
+    ('sources',           'deny_sources_update'),
+    ('sources',           'deny_sources_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -302,7 +324,11 @@ WITH expected_checks AS (
     ('signals',          'signals_type_check',              'signals.type IN (confirm, dispute)'),
     ('events',           'events_status_check',             'events.status IN (emerging, developing, verified, disputed)'),
     ('events',           'events_trust_score_check',        'events.trust_score BETWEEN 0 AND 100'),
-    ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)')
+    ('events',           'events_source_score_check',       'events.source_score BETWEEN 0 AND 100'),
+    ('events',           'events_crowd_score_check',        'events.crowd_score BETWEEN 0 AND 100'),
+    ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)'),
+    ('sources',          'sources_credibility_check',       'sources.credibility BETWEEN 0 AND 100'),
+    ('sources',          'sources_source_type_check',       'sources.source_type IN (media, official, expert, community)')
   ) AS t(tbl, expected_name, description)
 )
 SELECT
@@ -310,11 +336,9 @@ SELECT
   e.description AS "expected_constraint",
   CASE
     WHEN c.conname IS NOT NULL THEN 'PASS — ' || c.conname
-    -- Fall back: look for any CHECK constraint on the table that covers the column
     ELSE 'FAIL ← no matching CHECK constraint found (run Section 2 to inspect)'
   END AS status
 FROM expected_checks e
--- Try to find a CHECK constraint whose definition contains the key column name
 LEFT JOIN pg_constraint c
   ON c.conrelid = ('public.' || e.tbl)::regclass
   AND c.contype = 'c'
@@ -328,8 +352,20 @@ LEFT JOIN pg_constraint c
     -- events.trust_score check
     (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%trust_score%')
     OR
+    -- events.source_score check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%source_score%')
+    OR
+    -- events.crowd_score check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%crowd_score%')
+    OR
     -- user_preferences.theme check
     (e.tbl = 'user_preferences' AND pg_get_constraintdef(c.oid) LIKE '%system%' AND pg_get_constraintdef(c.oid) LIKE '%light%')
+    OR
+    -- sources.credibility check
+    (e.tbl = 'sources' AND pg_get_constraintdef(c.oid) LIKE '%credibility%')
+    OR
+    -- sources.source_type check
+    (e.tbl = 'sources' AND pg_get_constraintdef(c.oid) LIKE '%media%' AND pg_get_constraintdef(c.oid) LIKE '%official%')
   )
 ORDER BY e.tbl, e.description;
 
@@ -775,7 +811,8 @@ WITH rpc_checks AS (
   SELECT 'toggle_event_follow(uuid)'     AS fn, false AS anon_allowed UNION ALL
   SELECT 'get_rising_events(integer)'    AS fn, true  AS anon_allowed UNION ALL
   SELECT 'search_events(text,integer)'   AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_event_updates(text)'    AS fn, true  AS anon_allowed
+  SELECT 'search_event_updates(text)'    AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'get_event_sources(uuid)'       AS fn, true  AS anon_allowed   -- migration 023
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -836,6 +873,198 @@ LEFT JOIN (
   LIMIT 1
 ) p ON p.proname = x.expected_fn;
 
+-- ── Section 21: Sources table (migration 023) ────────────────────────────
+--
+-- Comprehensive verification of the sources table.
+-- RLS enablement   → Section 1
+-- RESTRICTIVE deny → Sections 3 + 11 (deny_sources_insert/update/delete)
+-- CHECK constraints → Section 12 (credibility, source_type)
+-- This section covers: table + column existence, permissive read policy,
+-- unique name index, absence of unexpected permissive write policies.
+
+-- ── Part A: Table and column existence ───────────────────────────────────
+
+SELECT
+  cl.relname AS table_name,
+  CASE WHEN cl.oid IS NOT NULL THEN 'PASS — table exists'
+       ELSE 'FAIL ← sources table missing (apply migration 023)' END AS table_status,
+  (
+    SELECT COUNT(*) FROM pg_attribute a
+    WHERE a.attrelid = cl.oid
+      AND a.attname IN ('id', 'name', 'domain', 'credibility', 'source_type', 'verified', 'created_at')
+      AND NOT a.attisdropped
+  ) AS expected_columns_found,
+  CASE
+    WHEN cl.oid IS NULL
+      THEN 'FAIL ← table missing (apply migration 023)'
+    WHEN (
+      SELECT COUNT(*) FROM pg_attribute a
+      WHERE a.attrelid = cl.oid
+        AND a.attname IN ('id', 'name', 'domain', 'credibility', 'source_type', 'verified', 'created_at')
+        AND NOT a.attisdropped
+    ) < 7
+      THEN 'FAIL ← one or more expected columns missing'
+    ELSE 'PASS — all 7 expected columns present'
+  END AS column_status
+FROM pg_namespace n
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = n.oid AND cl.relname = 'sources' AND cl.relkind = 'r'
+WHERE n.nspname = 'public';
+
+-- ── Part B: source_id column on event_updates ────────────────────────────
+
+SELECT
+  a.attname AS column_name,
+  CASE
+    WHEN a.attnum IS NULL
+      THEN 'FAIL ← source_id column missing from event_updates (apply migration 023)'
+    ELSE 'PASS'
+  END AS status
+FROM pg_class cl
+JOIN pg_namespace n ON n.oid = cl.relnamespace
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = 'source_id' AND NOT a.attisdropped
+WHERE n.nspname = 'public' AND cl.relname = 'event_updates';
+
+-- ── Part C: Unique name index ─────────────────────────────────────────────
+--
+-- idx_sources_name_lower prevents duplicate source records with the same name.
+
+SELECT
+  'idx_sources_name_lower' AS index_name,
+  CASE
+    WHEN pi.indexname IS NOT NULL THEN 'PASS — unique name index exists'
+    ELSE 'FAIL ← idx_sources_name_lower missing (apply migration 023)'
+  END AS status
+FROM (SELECT 'idx_sources_name_lower'::text AS expected_idx) x
+LEFT JOIN pg_indexes pi
+  ON pi.schemaname = 'public' AND pi.indexname = x.expected_idx;
+
+-- ── Part D: sources_read_all permissive policy ────────────────────────────
+
+SELECT
+  policyname AS "policy",
+  cmd,
+  CASE
+    WHEN policyname = 'sources_read_all' AND cmd = 'SELECT'
+      THEN 'PASS — expected public read policy'
+    ELSE 'FAIL ← unexpected policy or missing sources_read_all: ' || policyname
+  END AS status
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'sources'
+  AND permissive = 'PERMISSIVE'
+ORDER BY policyname;
+
+
+-- ── Section 22: Three-score trust model (migrations 023 + 024) ───────────
+--
+-- Verifies that events carries the three score columns, that the scoring
+-- functions exist with correct security settings, and that the composite
+-- formula produces expected outputs for known inputs.
+
+-- ── Part A: score columns on events ──────────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from events (apply migrations 023/024)'
+  END AS status
+FROM (VALUES ('source_score'), ('crowd_score')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'events'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: score function existence and security ─────────────────────────
+--
+-- compute_crowd_score, compute_source_score, compute_trust_score:
+--   must all be SECURITY DEFINER + SET search_path=public (internal helpers).
+-- recalculate_event_scores, reconcile_event_scores: same requirements.
+
+SELECT
+  expected.fn_name AS "function",
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← function missing (apply migration 024)'
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM (VALUES
+  ('compute_crowd_score'),
+  ('compute_source_score'),
+  ('compute_trust_score'),
+  ('recalculate_event_scores'),
+  ('reconcile_event_scores')
+) AS expected(fn_name)
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef, p.proconfig
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+) p ON p.proname = expected.fn_name
+ORDER BY expected.fn_name;
+
+-- ── Part C: compute_trust_score formula verification ─────────────────────
+--
+-- Verifies the composite formula: clamp(source + (crowd - 50) * 0.2, 0, 100)
+-- Tests known input/output pairs.
+
+SELECT
+  inputs.label,
+  inputs.p_source,
+  inputs.p_crowd,
+  inputs.expected,
+  public.compute_trust_score(inputs.p_source, inputs.p_crowd) AS actual,
+  CASE
+    WHEN public.compute_trust_score(inputs.p_source, inputs.p_crowd) = inputs.expected
+      THEN 'PASS'
+    ELSE 'FAIL ← got ' || public.compute_trust_score(inputs.p_source, inputs.p_crowd)
+         || ', expected ' || inputs.expected
+  END AS status
+FROM (VALUES
+  ('neutral baseline',       50,  50, 50),
+  ('max crowd boost',        50, 100, 60),
+  ('max crowd penalty',      50,   0, 40),
+  ('high source + boost',    80, 100, 90),
+  ('high source + penalty',  80,   0, 70),
+  ('low source + boost',     20, 100, 30),
+  ('clamp at 100',           95, 100, 100),
+  ('clamp at 0',              5,   0,  0),
+  ('partial crowd effect',   60,  75, 65)
+) AS inputs(label, p_source, p_crowd, expected)
+ORDER BY inputs.label;
+
+-- ── Part D: compute_crowd_score formula verification ─────────────────────
+
+SELECT
+  inputs.label,
+  inputs.confirms,
+  inputs.disputes,
+  inputs.expected,
+  public.compute_crowd_score(inputs.confirms, inputs.disputes) AS actual,
+  CASE
+    WHEN public.compute_crowd_score(inputs.confirms, inputs.disputes) = inputs.expected
+      THEN 'PASS'
+    ELSE 'FAIL ← got ' || public.compute_crowd_score(inputs.confirms, inputs.disputes)
+         || ', expected ' || inputs.expected
+  END AS status
+FROM (VALUES
+  ('no signals',      0,  0, 50),
+  ('all confirms',   10,  0, 100),
+  ('all disputes',    0, 10, 0),
+  ('50/50',           5,  5, 50),
+  ('75% confirms',    3,  1, 75),
+  ('1 of 3 confirms', 1,  2, 33)
+) AS inputs(label, confirms, disputes, expected)
+ORDER BY inputs.label;
+
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' (or 'SKIP') after migrations 001–022 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–024 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
