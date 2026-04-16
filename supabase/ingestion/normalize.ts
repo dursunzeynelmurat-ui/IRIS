@@ -77,7 +77,9 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
     {
       content: primaryContent,
       source_name: primarySourceName,
-      ...(raw.source_url ? { source_url: raw.source_url } : {}),
+      ...(raw.source_url   ? { source_url:   raw.source_url   } : {}),
+      ...(raw.source_id    ? { source_id:    raw.source_id    } : {}),
+      ...(raw.update_type  ? { update_type:  raw.update_type  } : {}),
     },
   ];
 
@@ -102,7 +104,10 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
       updates.push({
         content,
         source_name,
-        ...(u.source_url ? { source_url: u.source_url } : {}),
+        ...(u.source_url   ? { source_url:   u.source_url   } : {}),
+        ...(u.source_id    ? { source_id:    u.source_id    } : {}),
+        ...(u.update_type  ? { update_type:  u.update_type  } : {}),
+        ...(u.headline     ? { headline:     u.headline     } : {}),
       });
     }
   }
@@ -111,5 +116,7 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
     title,
     status: raw.status,
     updates,
+    ...(raw.image_url ? { image_url: raw.image_url } : {}),
+    ...(raw.summary   ? { summary:   raw.summary   } : {}),
   };
 }

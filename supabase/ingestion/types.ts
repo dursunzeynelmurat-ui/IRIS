@@ -13,7 +13,7 @@
  * bleeding source-specific logic into the write path.
  */
 
-import type { EventStatus } from '../../src/types';
+import type { EventStatus, UpdateType } from '../../src/types';
 
 // ── Source layer ────────────────────────────────────────────────────────────
 //
@@ -36,6 +36,12 @@ export interface RawSourceUpdate {
   content: string;
   source_name: string;
   source_url?: string;
+  /** Optional UUID of a structured source in public.sources. */
+  source_id?: string;
+  /** Update classification for timeline rendering. Defaults to 'report'. */
+  update_type?: UpdateType;
+  /** Short bold headline for the update. */
+  headline?: string;
 }
 
 export interface RawSourceItem {
@@ -49,6 +55,14 @@ export interface RawSourceItem {
   source_name: string;
   /** Primary source URL. Optional. */
   source_url?: string;
+  /** Optional UUID of a structured source in public.sources for the primary update. */
+  source_id?: string;
+  /** Classification for the primary update. Defaults to 'report'. */
+  update_type?: UpdateType;
+  /** Hero image URL for the event. */
+  image_url?: string;
+  /** Short contextual summary (1-3 sentences) for the event card. */
+  summary?: string;
   /** Additional coverage from other sources. Become updates[1..] after normalization. */
   additional_updates?: RawSourceUpdate[];
 }
@@ -68,12 +82,22 @@ export interface NormalizedUpdate {
   content: string;
   source_name: string;
   source_url?: string;
+  /** Optional UUID of a structured source in public.sources. */
+  source_id?: string;
+  /** Update classification for timeline rendering. */
+  update_type?: UpdateType;
+  /** Short bold headline rendered above content in the timeline. */
+  headline?: string;
 }
 
 export interface NormalizedEvent {
   title: string;
   status: EventStatus;
   updates: NormalizedUpdate[];
+  /** Hero image URL for the event card and detail page. */
+  image_url?: string;
+  /** Short contextual summary (1-3 sentences). */
+  summary?: string;
 }
 
 // ── Adapter interface ───────────────────────────────────────────────────────

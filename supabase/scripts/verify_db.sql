@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–024) to confirm expected state.
+-- Run after applying all migrations (001–027) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -150,7 +150,8 @@ WHERE n.nspname = 'public'
     'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE OR DELETE on signals (migrations 006, 013)
     'trg_sync_source_count',              -- AFTER INSERT OR DELETE on event_updates (migration 003)
     'signals_enforce_immutable_fields',   -- BEFORE UPDATE on signals (migration 009)
-    'trg_sync_follow_count'               -- AFTER INSERT OR DELETE on event_follows (migration 019)
+    'trg_sync_follow_count',              -- AFTER INSERT OR DELETE on event_follows (migration 019)
+    'sync_latest_update_at'              -- AFTER INSERT OR DELETE on event_updates (migration 025)
   )
 ORDER BY c.relname, t.tgname;
 
@@ -184,8 +185,8 @@ WHERE n.nspname = 'auth'
 -- implementation detail, not a public API endpoint.
 
 WITH checks AS (
-  SELECT 'recalculate_trust_score(uuid)'         AS fn UNION ALL
-  SELECT 'ingest_event(text,text,jsonb)'              UNION ALL
+  SELECT 'recalculate_trust_score(uuid)'              AS fn UNION ALL
+  SELECT 'ingest_event(text,text,jsonb,text,text)'        UNION ALL
   SELECT 'reconcile_source_counts()'                  UNION ALL
   SELECT 'reconcile_trust_scores()'                   UNION ALL
   SELECT 'compute_trust_score(integer,integer)'       UNION ALL  -- migration 024 (composite)
@@ -328,7 +329,8 @@ WITH expected_checks AS (
     ('events',           'events_crowd_score_check',        'events.crowd_score BETWEEN 0 AND 100'),
     ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)'),
     ('sources',          'sources_credibility_check',       'sources.credibility BETWEEN 0 AND 100'),
-    ('sources',          'sources_source_type_check',       'sources.source_type IN (media, official, expert, community)')
+    ('sources',          'sources_source_type_check',       'sources.source_type IN (media, official, expert, community)'),
+    ('event_updates',    'chk_event_updates_update_type',   'event_updates.update_type IN (report, witness, official, confirmed, under_verification, analysis, correction)')
   ) AS t(tbl, expected_name, description)
 )
 SELECT
@@ -366,6 +368,9 @@ LEFT JOIN pg_constraint c
     OR
     -- sources.source_type check
     (e.tbl = 'sources' AND pg_get_constraintdef(c.oid) LIKE '%media%' AND pg_get_constraintdef(c.oid) LIKE '%official%')
+    OR
+    -- event_updates.update_type check
+    (e.tbl = 'event_updates' AND pg_get_constraintdef(c.oid) LIKE '%report%' AND pg_get_constraintdef(c.oid) LIKE '%witness%')
   )
 ORDER BY e.tbl, e.description;
 
@@ -390,6 +395,8 @@ WITH expected_triggers AS (
      'AFTER INSERT OR UPDATE OR DELETE — must cover DELETE for user account cascade'),
     ('event_updates', 'trg_sync_source_count',            13,
      'AFTER INSERT OR DELETE'),
+    ('event_updates', 'sync_latest_update_at',            13,
+     'AFTER INSERT OR DELETE — keeps events.latest_update_at in sync'),
     ('event_follows', 'trg_sync_follow_count',            13,
      'AFTER INSERT OR DELETE — keeps follow_count denormalized counter in sync')
   ) AS t(tbl, trig, expected_tgtype, description)
@@ -808,11 +815,12 @@ ORDER BY policyname;
 --   public read functions — both anon and authenticated must be able to call them.
 
 WITH rpc_checks AS (
-  SELECT 'toggle_event_follow(uuid)'     AS fn, false AS anon_allowed UNION ALL
-  SELECT 'get_rising_events(integer)'    AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_events(text,integer)'   AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_event_updates(text)'    AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'get_event_sources(uuid)'       AS fn, true  AS anon_allowed   -- migration 023
+  SELECT 'toggle_event_follow(uuid)'             AS fn, false AS anon_allowed UNION ALL
+  SELECT 'get_rising_events(integer)'            AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_events(text,integer)'           AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_event_updates(text)'            AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'get_event_sources(uuid)'               AS fn, true  AS anon_allowed UNION ALL  -- migration 023
+  SELECT 'get_feed_events(text,integer,integer)' AS fn, true  AS anon_allowed            -- migration 027
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -1065,6 +1073,195 @@ FROM (VALUES
 ORDER BY inputs.label;
 
 
+-- ── Section 23: Event card fields (migration 025) ────────────────────────
+--
+-- Verifies image_url, summary, and latest_update_at columns on events,
+-- the sync_latest_update_at trigger function, and the feed ordering index.
+
+-- ── Part A: New columns on events ────────────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from events (apply migration 025)'
+  END AS status
+FROM (VALUES ('image_url'), ('summary'), ('latest_update_at')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'events'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: sync_latest_update_at is SECURITY DEFINER ────────────────────
+
+SELECT
+  p.proname AS "function",
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← sync_latest_update_at() missing (apply migration 025)'
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM (SELECT 'sync_latest_update_at'::text AS expected_fn) x
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef, p.proconfig
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'sync_latest_update_at'
+  LIMIT 1
+) p ON p.proname = x.expected_fn;
+
+-- ── Part C: Feed ordering index on events ────────────────────────────────
+
+SELECT
+  CASE WHEN count(*) > 0
+    THEN 'PASS — idx_events_latest_update_at exists'
+    ELSE 'FAIL ← idx_events_latest_update_at missing (apply migration 025)'
+  END AS "feed_ordering_index_status"
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename  = 'events'
+  AND indexname  = 'idx_events_latest_update_at';
+
+
+-- ── Section 24: Update structure (migration 026) ──────────────────────────
+--
+-- Verifies update_type and headline columns on event_updates.
+
+-- ── Part A: New columns on event_updates ─────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from event_updates (apply migration 026)'
+  END AS status
+FROM (VALUES ('update_type'), ('headline')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'event_updates'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: update_type CHECK constraint ─────────────────────────────────
+--
+-- Covered by Section 12 (chk_event_updates_update_type).
+-- This part confirms the default value is 'report'.
+
+SELECT
+  a.attname                        AS column_name,
+  pg_get_expr(d.adbin, d.adrelid)  AS column_default,
+  CASE
+    WHEN d.adbin IS NULL
+      THEN 'FAIL ← update_type has no default (apply migration 026)'
+    WHEN pg_get_expr(d.adbin, d.adrelid) LIKE '%report%'
+      THEN 'PASS'
+    ELSE 'FAIL ← default does not include ''report'': ' || pg_get_expr(d.adbin, d.adrelid)
+  END AS status
+FROM pg_attribute a
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE a.attrelid = 'public.event_updates'::regclass
+  AND a.attname  = 'update_type'
+  AND NOT a.attisdropped;
+
+-- ── Part C: update_type + event_id index ─────────────────────────────────
+
+SELECT
+  CASE WHEN count(*) > 0
+    THEN 'PASS — idx_event_updates_update_type exists'
+    ELSE 'FAIL ← idx_event_updates_update_type missing (apply migration 026)'
+  END AS "update_type_index_status"
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename  = 'event_updates'
+  AND indexname  = 'idx_event_updates_update_type';
+
+
+-- ── Section 25: Feed RPCs (migration 027) ────────────────────────────────
+--
+-- Verifies get_feed_events() exists, is SECURITY INVOKER, and callable.
+-- Also verifies get_rising_events now returns explicit card columns.
+
+-- ── Part A: get_feed_events existence and security ────────────────────────
+
+SELECT
+  'get_feed_events' AS function_name,
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← function missing (apply migration 027)'
+    WHEN p.prosecdef = true
+      THEN 'FAIL ← function is unexpectedly SECURITY DEFINER (should be INVOKER)'
+    ELSE 'PASS — SECURITY INVOKER'
+  END AS status
+FROM (SELECT 'get_feed_events'::text AS expected_fn) x
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'get_feed_events'
+  LIMIT 1
+) p ON p.proname = x.expected_fn;
+
+-- ── Part B: ingest_event new signature ───────────────────────────────────
+--
+-- Migration 027 replaces ingest_event(text, text, jsonb) with the
+-- 5-argument form (text, text, jsonb, text, text).
+-- Both the old 3-arg form (removed) and the new 5-arg form are checked.
+
+SELECT
+  'ingest_event(text,text,jsonb) — must be gone' AS check_name,
+  CASE WHEN count(*) = 0
+    THEN 'PASS — old 3-arg form no longer exists'
+    ELSE 'FAIL ← old 3-arg ingest_event still present (apply migration 027)'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'ingest_event'
+  AND pronargs = 3
+
+UNION ALL
+
+SELECT
+  'ingest_event(text,text,jsonb,text,text) — must exist',
+  CASE WHEN count(*) > 0
+    THEN 'PASS — 5-arg form exists'
+    ELSE 'FAIL ← new 5-arg ingest_event missing (apply migration 027)'
+  END
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'ingest_event'
+  AND pronargs = 5;
+
+-- ── Part C: get_feed_events mode validation ───────────────────────────────
+--
+-- Valid mode values must not raise errors; an invalid mode must raise.
+-- These are SELECTS from the function — read-only, safe on production.
+
+SELECT
+  modes.label,
+  CASE
+    WHEN modes.should_succeed THEN
+      CASE
+        WHEN (SELECT count(*) FROM public.get_feed_events(modes.mode, 1, 0)) >= 0
+          THEN 'PASS — mode accepted'
+        ELSE 'FAIL ← unexpected error'
+      END
+    ELSE 'SKIP — invalid mode raises exception (expected, tested separately)'
+  END AS status
+FROM (VALUES
+  ('new',      'new',      true),
+  ('verified', 'verified', true),
+  ('rising',   'rising',   true)
+) AS modes(label, mode, should_succeed)
+ORDER BY modes.label;
+
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' (or 'SKIP') after migrations 001–024 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–027 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
