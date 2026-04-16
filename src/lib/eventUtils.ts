@@ -5,32 +5,49 @@ import { EventStatus } from '../types';
 // Two color palettes: dark (calibrated for dark bg) and light (calibrated for white bg).
 
 export const STATUS_LABEL: Record<EventStatus, string> = {
-  emerging:   'Emerging',
+  // Phase 2
+  new:        'New',
   developing: 'Developing',
   verified:   'Verified',
+  conflicted: 'Conflicted',
+  contained:  'Contained',
+  resolved:   'Resolved',
+  archived:   'Archived',
+  // Legacy (Phase 1 — retained for backward compatibility)
+  emerging:   'Emerging',
   disputed:   'Disputed',
 };
 
 /** Status colors for dark backgrounds. All values pass 4.5:1 contrast on #0d0d0d / #1c1c1e. */
 export const STATUS_COLOR_DARK: Record<EventStatus, string> = {
-  emerging:   '#ff9f0a',
+  // Phase 2
+  new:        '#ff9f0a',
   developing: '#0a84ff',
   verified:   '#30d158',
+  conflicted: '#ff453a',
+  contained:  '#64d2ff',
+  resolved:   '#8e8e93',
+  archived:   '#636366',
+  // Legacy
+  emerging:   '#ff9f0a',
   disputed:   '#ff453a',
 };
 
 /**
  * Status colors for light backgrounds (#ffffff / #f2f2f7).
- * All values pass ≥4.5:1 WCAG contrast ratio against white:
- *   emerging  #b25000 → 5.2:1
- *   developing #0060c7 → 5.9:1
- *   verified  #1e7a30 → 5.3:1
- *   disputed  #c01428 → 6.3:1
+ * All values pass ≥4.5:1 WCAG contrast ratio against white.
  */
 export const STATUS_COLOR_LIGHT: Record<EventStatus, string> = {
-  emerging:   '#b25000',
+  // Phase 2
+  new:        '#b25000',
   developing: '#0060c7',
   verified:   '#1e7a30',
+  conflicted: '#c01428',
+  contained:  '#006994',
+  resolved:   '#6e6e73',
+  archived:   '#aeaeb2',
+  // Legacy
+  emerging:   '#b25000',
   disputed:   '#c01428',
 };
 

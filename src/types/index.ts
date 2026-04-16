@@ -3,7 +3,20 @@
 // Mirrors the database schema exactly.
 // ============================================================
 
-export type EventStatus = 'emerging' | 'developing' | 'verified' | 'disputed';
+/** Phase 1 status values retained for compatibility with legacy data. */
+type EventStatusLegacy = 'emerging' | 'disputed';
+
+/** Phase 2 status vocabulary — aligned with event lifecycle. */
+type EventStatusPhase2 =
+  | 'new'         // First sighting; minimal confirmation
+  | 'developing'  // Actively evolving with new information
+  | 'verified'    // Confirmed by multiple reliable sources
+  | 'conflicted'  // Contradictory source reporting
+  | 'contained'   // Situation controlled; no longer spreading
+  | 'resolved'    // Confirmed closure/resolution
+  | 'archived';   // Removed from all feeds (stale or low-value)
+
+export type EventStatus = EventStatusPhase2 | EventStatusLegacy;
 
 export type SignalType = 'confirm' | 'dispute';
 
@@ -30,6 +43,37 @@ export interface Event {
   /** Timestamp of the most recent event_update. Drives "Xm ago" display and feed ordering. NULL if no updates yet. */
   latest_update_at: string | null;
   created_at: string;
+
+  // ── Phase 2 additions ──────────────────────────────────────────────────────
+  /** URL-safe identifier derived from title + short UUID. */
+  slug: string | null;
+  /** High-level category: 'disaster' | 'conflict' | 'health' | 'politics' | 'economy' | null */
+  category: string | null;
+  subcategory: string | null;
+  /** Controls feed surfacing independently of status. */
+  visibility: 'visible' | 'low_visibility' | 'hidden_pending_review' | 'archived';
+  /** Global / regional / local scope. */
+  scope: 'global' | 'regional' | 'local';
+  /** 0–100. Operational importance separate from trust. */
+  importance_score: number;
+  /** Pre-computed weighted feed ordering composite. */
+  feed_rank: number;
+  /** ISO 3166-1 alpha-2 codes for affected countries. */
+  country_codes: string[];
+  region_tags: string[];
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** Timestamp of the first source item that created this event. */
+  first_seen_at: string;
+  /** When event metadata last changed. */
+  last_updated_at: string | null;
+  /** Count of VISIBLE event_updates (is_visible=true). */
+  update_count: number;
+  /** True when at least one official-tier source has confirmed. */
+  official_confirmation: boolean;
+  /** True when at least one event_source has stance='contradicts'. */
+  conflict_flag: boolean;
 }
 
 // public.event_follows
@@ -41,13 +85,25 @@ export interface EventFollow {
 
 /** Classification of an event_update for timeline icon and color coding. */
 export type UpdateType =
+  // Phase 1 values — display-oriented
   | 'report'             // Standard report from a named source (default)
   | 'witness'            // Eyewitness or on-the-ground account
   | 'official'           // Statement from an official authority
   | 'confirmed'          // Explicitly confirms a prior report
   | 'under_verification' // Early/unverified signal; treat with caution
   | 'analysis'           // Contextual analysis or editorial assessment
-  | 'correction';        // Corrects a prior update
+  | 'correction'         // Corrects a prior update
+  // Phase 2 values — lifecycle-oriented
+  | 'first_report'          // First item that created this event
+  | 'official_confirmation' // Confirmation from an official source
+  | 'casualty_update'       // Updated casualty figures
+  | 'location_refinement'   // More precise location information
+  | 'escalation'            // Situation has worsened
+  | 'deescalation'          // Situation has improved
+  | 'denial'                // Official denial of earlier reports
+  | 'contradiction'         // Source contradicts prevailing narrative
+  | 'closure'               // Event has ended/been resolved
+  | 'generic_update';       // General update not fitting other types
 
 // public.event_updates
 export interface EventUpdate {
@@ -63,6 +119,18 @@ export interface EventUpdate {
   /** Short bold headline for the update (1 line). NULL for older updates. */
   headline: string | null;
   created_at: string;
+
+  // ── Phase 2 additions ──────────────────────────────────────────────────────
+  /** When the source originally published this information. */
+  published_at: string | null;
+  /** Explicit ordering timestamp (defaults to published_at ?? created_at). */
+  display_order_time: string | null;
+  /** FK to normalized_source_items. */
+  normalized_source_item_id: string | null;
+  /** 0–100 confidence in this update's accuracy. */
+  confidence: number;
+  /** Whether this update appears in the visible timeline. */
+  is_visible: boolean;
 }
 
 // public.signals
@@ -99,10 +167,16 @@ export interface EventCard {
   summary: string | null;
   status: EventStatus;
   trust_score: number;
+  importance_score: number;
+  feed_rank: number;
   source_count: number;
   follow_count: number;
   latest_update_at: string | null;
   created_at: string;
+  // Phase 2 additions surfaced on cards:
+  official_confirmation: boolean;
+  conflict_flag: boolean;
+  update_count: number;
 }
 
 /** Row returned by the get_event_sources RPC. */
@@ -130,4 +204,67 @@ export interface UserPreferences {
   user_id: string;
   theme: ThemePreference;
   updated_at: string;
+}
+
+// ── Phase 2 pipeline types ────────────────────────────────────────────────────
+
+export type ReliabilityTier = 'low' | 'medium' | 'high' | 'official';
+export type FeedSourceType = 'media_rss' | 'official_rss' | 'official_page';
+
+/** Row from public.source_feeds. */
+export interface SourceFeed {
+  id: string;
+  name: string;
+  slug: string;
+  source_type: FeedSourceType;
+  feed_url: string;
+  reliability_tier: ReliabilityTier;
+  credibility_score: number;      // 0–100
+  poll_interval_seconds: number;
+  parser_type: 'rss2' | 'atom' | 'json_feed' | 'html_page';
+  is_active: boolean;
+  health_score: number;           // 0–100
+  last_fetched_at: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error_message: string | null;
+  linked_source_id: string | null;
+  created_at: string;
+}
+
+/** Row from public.event_sources — per-event source attribution. */
+export interface EventSourceAttribution {
+  id: string;
+  event_id: string;
+  normalized_source_item_id: string | null;
+  source_feed_id: string | null;
+  source_name: string;
+  source_type: string;
+  source_url: string | null;
+  published_at: string | null;
+  reliability_tier: ReliabilityTier;
+  stance: 'supports' | 'contradicts' | 'neutral';
+  created_at: string;
+}
+
+/** Row from public.event_score_history — sparkline data point. */
+export interface EventScoreSnapshot {
+  id: string;
+  event_id: string;
+  trust_score: number;
+  importance_score: number;
+  status_snapshot: string | null;
+  recorded_at: string;
+}
+
+/** Result row from get_event_sources_detail RPC. */
+export interface EventSourceDetail {
+  id: string;
+  source_name: string;
+  source_type: string;
+  source_url: string | null;
+  reliability_tier: ReliabilityTier;
+  credibility_score: number | null;
+  stance: 'supports' | 'contradicts' | 'neutral';
+  published_at: string | null;
 }

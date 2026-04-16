@@ -1262,6 +1262,275 @@ FROM (VALUES
 ORDER BY modes.label;
 
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- PHASE 2 VERIFICATION — migrations 028–034
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── Section P1: Phase 2 tables exist ────────────────────────────────────────
+
+WITH expected_tables AS (
+  SELECT unnest(ARRAY[
+    'source_feeds',
+    'ingestion_jobs',
+    'raw_source_items',
+    'normalized_source_items',
+    'event_sources',
+    'event_media',
+    'event_score_history'
+  ]) AS tbl
+)
+SELECT
+  e.tbl AS "table",
+  CASE
+    WHEN c.relname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← table missing'
+  END AS status
+FROM expected_tables e
+LEFT JOIN pg_class c
+  ON c.relnamespace = 'public'::regnamespace
+  AND c.relkind = 'r'
+  AND c.relname = e.tbl
+ORDER BY e.tbl;
+
+
+-- ── Section P2: RLS enabled on all Phase 2 tables ──────────────────────────
+
+SELECT
+  relname        AS "table",
+  relrowsecurity AS "rls_enabled",
+  CASE WHEN relrowsecurity THEN 'PASS' ELSE 'FAIL ← RLS must be ON' END AS status
+FROM pg_class
+WHERE relnamespace = 'public'::regnamespace
+  AND relkind = 'r'
+  AND relname IN (
+    'source_feeds', 'ingestion_jobs',
+    'raw_source_items', 'normalized_source_items',
+    'event_sources', 'event_media', 'event_score_history'
+  )
+ORDER BY relname;
+
+
+-- ── Section P3: Phase 2 RESTRICTIVE deny policies ──────────────────────────
+
+WITH expected AS (
+  SELECT * FROM (VALUES
+    -- source_feeds: public read, deny writes
+    ('source_feeds',            'deny_source_feeds_insert'),
+    ('source_feeds',            'deny_source_feeds_update'),
+    ('source_feeds',            'deny_source_feeds_delete'),
+    -- ingestion_jobs: fully internal
+    ('ingestion_jobs',          'deny_ingestion_jobs_select'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_insert'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_update'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_delete'),
+    -- raw_source_items: fully internal
+    ('raw_source_items',        'deny_raw_items_select'),
+    ('raw_source_items',        'deny_raw_items_insert'),
+    ('raw_source_items',        'deny_raw_items_update'),
+    ('raw_source_items',        'deny_raw_items_delete'),
+    -- normalized_source_items: fully internal
+    ('normalized_source_items', 'deny_norm_items_select'),
+    ('normalized_source_items', 'deny_norm_items_insert'),
+    ('normalized_source_items', 'deny_norm_items_update'),
+    ('normalized_source_items', 'deny_norm_items_delete'),
+    -- event_sources: public read, deny writes
+    ('event_sources',           'deny_event_sources_insert'),
+    ('event_sources',           'deny_event_sources_update'),
+    ('event_sources',           'deny_event_sources_delete'),
+    -- event_media: public read, deny writes
+    ('event_media',             'deny_event_media_insert'),
+    ('event_media',             'deny_event_media_update'),
+    ('event_media',             'deny_event_media_delete'),
+    -- event_score_history: public read, deny writes
+    ('event_score_history',     'deny_score_history_insert'),
+    ('event_score_history',     'deny_score_history_update'),
+    ('event_score_history',     'deny_score_history_delete')
+  ) AS t(tbl, pol)
+)
+SELECT
+  e.tbl    AS "table",
+  e.pol    AS "policy",
+  CASE
+    WHEN p.policyname IS NULL             THEN 'FAIL ← POLICY MISSING'
+    WHEN p.permissive <> 'RESTRICTIVE'    THEN 'FAIL ← must be RESTRICTIVE'
+    ELSE 'PASS'
+  END AS status
+FROM expected e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = e.tbl
+  AND p.policyname = e.pol
+ORDER BY e.tbl, e.pol;
+
+
+-- ── Section P4: Phase 2 columns on events ──────────────────────────────────
+
+WITH expected_cols AS (
+  SELECT * FROM (VALUES
+    ('events', 'slug'),
+    ('events', 'category'),
+    ('events', 'subcategory'),
+    ('events', 'visibility'),
+    ('events', 'scope'),
+    ('events', 'importance_score'),
+    ('events', 'feed_rank'),
+    ('events', 'country_codes'),
+    ('events', 'region_tags'),
+    ('events', 'city'),
+    ('events', 'latitude'),
+    ('events', 'longitude'),
+    ('events', 'first_seen_at'),
+    ('events', 'last_updated_at'),
+    ('events', 'update_count'),
+    ('events', 'official_confirmation'),
+    ('events', 'conflict_flag')
+  ) AS t(tbl, col)
+)
+SELECT
+  e.col AS "column",
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← column missing from events'
+  END AS status
+FROM expected_cols e
+LEFT JOIN pg_attribute a
+  ON a.attrelid = 'public.events'::regclass
+  AND a.attname = e.col
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY e.col;
+
+
+-- ── Section P5: Phase 2 columns on event_updates ──────────────────────────
+
+WITH expected_cols AS (
+  SELECT * FROM (VALUES
+    ('event_updates', 'published_at'),
+    ('event_updates', 'display_order_time'),
+    ('event_updates', 'normalized_source_item_id'),
+    ('event_updates', 'confidence'),
+    ('event_updates', 'impact_delta_trust'),
+    ('event_updates', 'impact_delta_importance'),
+    ('event_updates', 'is_visible')
+  ) AS t(tbl, col)
+)
+SELECT
+  e.col AS "column",
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← column missing from event_updates'
+  END AS status
+FROM expected_cols e
+LEFT JOIN pg_attribute a
+  ON a.attrelid = 'public.event_updates'::regclass
+  AND a.attname = e.col
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY e.col;
+
+
+-- ── Section P6: Phase 2 SECURITY DEFINER functions ─────────────────────────
+
+SELECT
+  p.proname    AS "function",
+  p.prosecdef  AS "security_definer",
+  CASE
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN (
+    'compute_importance_score',   -- migration 033
+    'compute_feed_rank',          -- migration 033
+    'recompute_event_state',      -- migration 033
+    'create_event_for_item',      -- migration 034
+    'attach_item_to_event',       -- migration 034
+    'get_event_detail',           -- migration 034
+    'get_event_updates_for_detail', -- migration 034
+    'get_event_score_history',    -- migration 034
+    'get_event_sources_detail',   -- migration 034
+    'sync_update_count'           -- migration 032
+  )
+ORDER BY p.proname;
+
+
+-- ── Section P7: trg_sync_update_count trigger ──────────────────────────────
+
+SELECT
+  t.tgname   AS "trigger",
+  c.relname  AS "table",
+  CASE t.tgenabled
+    WHEN 'O' THEN 'enabled'
+    WHEN 'D' THEN 'DISABLED'
+    ELSE t.tgenabled::text
+  END AS state,
+  CASE
+    WHEN t.tgname IS NULL         THEN 'FAIL ← trigger missing'
+    WHEN t.tgenabled = 'D'        THEN 'FAIL ← trigger is disabled'
+    -- AFTER INSERT OR UPDATE OR DELETE = tgtype 29
+    WHEN t.tgtype <> 29           THEN 'FAIL ← wrong tgtype: ' || t.tgtype
+    ELSE 'PASS'
+  END AS status
+FROM pg_trigger t
+JOIN pg_class c ON c.oid = t.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relname = 'event_updates'
+  AND t.tgname = 'trg_sync_update_count';
+
+
+-- ── Section P8: events.status CHECK allows Phase 2 values ──────────────────
+
+SELECT
+  pg_get_constraintdef(c.oid) AS "status_check_definition",
+  CASE
+    WHEN pg_get_constraintdef(c.oid) LIKE '%new%'
+     AND pg_get_constraintdef(c.oid) LIKE '%conflicted%'
+     AND pg_get_constraintdef(c.oid) LIKE '%archived%'
+      THEN 'PASS — Phase 2 values present'
+    ELSE 'FAIL ← Phase 2 status values missing from constraint'
+  END AS status
+FROM pg_constraint c
+WHERE c.conrelid = 'public.events'::regclass
+  AND c.contype = 'c'
+  AND c.conname = 'events_status_check';
+
+
+-- ── Section P9: event_updates.update_type CHECK has Phase 2 values ─────────
+
+SELECT
+  pg_get_constraintdef(c.oid) AS "update_type_check_definition",
+  CASE
+    WHEN pg_get_constraintdef(c.oid) LIKE '%first_report%'
+     AND pg_get_constraintdef(c.oid) LIKE '%official_confirmation%'
+     AND pg_get_constraintdef(c.oid) LIKE '%closure%'
+      THEN 'PASS — Phase 2 values present'
+    ELSE 'FAIL ← Phase 2 update_type values missing from constraint'
+  END AS status
+FROM pg_constraint c
+WHERE c.conrelid = 'public.event_updates'::regclass
+  AND c.contype = 'c'
+  AND c.conname = 'chk_event_updates_update_type';
+
+
+-- ── Section P10: source_feeds unique indexes ────────────────────────────────
+
+SELECT
+  indexname    AS "index",
+  indexdef     AS "definition",
+  CASE WHEN indexname IS NOT NULL THEN 'PASS' ELSE 'FAIL ← index missing' END AS status
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename = 'source_feeds'
+  AND indexname IN ('source_feeds_slug_key', 'source_feeds_feed_url_key')
+ORDER BY indexname;
+
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' (or 'SKIP') after migrations 001–027 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–034 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.
