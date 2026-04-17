@@ -11,14 +11,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { EventCard } from '../components/EventCard';
 import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../hooks/useAuth';
 import { MIN_QUERY_LEN, useEventSearch } from '../hooks/useEventSearch';
 import { useEvents } from '../hooks/useEvents';
 import { useRisingEvents } from '../hooks/useRisingEvents';
-import { useUserSignals } from '../hooks/useUserSignals';
 import { Event } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -39,9 +38,7 @@ const TABS: Tab[] = [
   { key: 'rising',   label: 'Rising'   },
 ];
 
-// ── Tab filtering — New and Verified only ─────────────────────
-// Rising is backend-driven (useRisingEvents). New/Verified derive
-// from the live events feed without an extra network call.
+// ── Tab filtering ─────────────────────────────────────────────
 
 function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] {
   switch (tab) {
@@ -57,12 +54,10 @@ function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] 
 // ── Screen ────────────────────────────────────────────────────
 
 export function EventListScreen({ navigation }: Props) {
-  const { events, loading, refreshing, error, refetch }                        = useEvents();
-  const { userId }                                                               = useAuth();
-  const { signalMap, setSignal }                                                 = useUserSignals(userId);
-  const { colors }                                                               = useTheme();
-
-  const [activeTab, setActiveTab] = useState<FeedTab>('new');
+  const insets = useSafeAreaInsets();
+  const { events, loading, refreshing, error, refetch } = useEvents();
+  const { colors }                                       = useTheme();
+  const [activeTab, setActiveTab]                        = useState<FeedTab>('new');
 
   const {
     query: searchQuery,
@@ -83,8 +78,7 @@ export function EventListScreen({ navigation }: Props) {
   } = useRisingEvents();
 
   // ── Displayed data ────────────────────────────────────────────
-  // Search overrides tabs. Rising is served by the backend hook.
-  // New/Verified derive from the live feed.
+
   const displayed: Event[] = isSearching
     ? searchResults
     : activeTab === 'rising'
@@ -97,10 +91,7 @@ export function EventListScreen({ navigation }: Props) {
   }
 
   function handleTabPress(key: FeedTab) {
-    if (isSearching) {
-      // Tapping a tab while searching clears search and switches tab.
-      handleClearSearch();
-    }
+    if (isSearching) handleClearSearch();
     setActiveTab(key);
   }
 
@@ -108,153 +99,145 @@ export function EventListScreen({ navigation }: Props) {
 
   if (loading) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
-        <ActivityIndicator size="large" color={colors.textSecondary} />
+      <View style={[styles.fullCentered, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={colors.iris} />
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+      <View style={[styles.fullCentered, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
         <Text style={[styles.errorText, { color: colors.textPrimary }]}>
           Unable to load events.
         </Text>
         <TouchableOpacity
-          style={[styles.retryBtn, { borderColor: colors.borderStrong }]}
+          style={[styles.retryBtn, { borderColor: colors.iris }]}
           onPress={refetch}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Retry loading events"
         >
-          <Text style={[styles.retryText, { color: colors.textPrimary }]}>Retry</Text>
+          <Text style={[styles.retryText, { color: colors.iris }]}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // ── Search bar color tokens ────────────────────────────────────
-  // bgInput is bgElevated in dark and white in light — correct for both themes.
-  const inputBorder = isSearching ? colors.iris + '60' : colors.border;
+  // ── Search border ──────────────────────────────────────────────
+  const searchBorder = isSearching ? colors.iris : colors.border;
 
-  // ── Empty / loading state for the list area ───────────────────
+  // ── Active event count ────────────────────────────────────────
+  const eventCount = events.length;
+
+  // ── Empty state renderer ──────────────────────────────────────
   function renderEmpty() {
     if (isSearching) {
-      // Loading: first search, results not yet arrived.
-      if (searchLoading) {
-        return (
-          <View style={styles.emptyContainer}>
-            <ActivityIndicator size="small" color={colors.textSecondary} />
-          </View>
-        );
-      }
-      // Backend error.
-      if (searchError) {
-        return (
-          <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              Search unavailable.
-            </Text>
-            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-              Check your connection and try again.
-            </Text>
-          </View>
-        );
-      }
-      // Query too short — hasn't been sent yet.
-      if (searchQuery.trim().length < MIN_QUERY_LEN) {
-        return (
-          <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-              Type at least 2 characters to search.
-            </Text>
-          </View>
-        );
-      }
-      // Sent and returned empty.
+      if (searchLoading) return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="small" color={colors.iris} />
+        </View>
+      );
+      if (searchError) return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Search unavailable.</Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Check your connection and try again.</Text>
+        </View>
+      );
+      if (searchQuery.trim().length < MIN_QUERY_LEN) return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Type at least 2 characters to search.</Text>
+        </View>
+      );
       return (
         <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No events match "{searchQuery.trim()}".
-          </Text>
-          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-            Try a different keyword.
-          </Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No events match "{searchQuery.trim()}".</Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Try a different keyword.</Text>
         </View>
       );
     }
 
     if (activeTab === 'rising') {
-      if (risingLoading) {
-        return (
-          <View style={styles.emptyContainer}>
-            <ActivityIndicator size="small" color={colors.textSecondary} />
-          </View>
-        );
-      }
-      if (risingError) {
-        return (
-          <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              Unable to load rising events.
-            </Text>
-            <TouchableOpacity
-              style={[styles.retryBtn, { borderColor: colors.borderStrong, marginTop: 12 }]}
-              onPress={refetchRising}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Retry loading rising events"
-            >
-              <Text style={[styles.retryText, { color: colors.textPrimary }]}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      }
+      if (risingLoading) return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="small" color={colors.iris} />
+        </View>
+      );
+      if (risingError) return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Unable to load rising events.</Text>
+          <TouchableOpacity
+            style={[styles.retryBtn, { borderColor: colors.iris, marginTop: 12 }]}
+            onPress={refetchRising}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading rising events"
+          >
+            <Text style={[styles.retryText, { color: colors.iris }]}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
       return (
         <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Nothing developing yet.
-          </Text>
-          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-            Stories gain momentum from source coverage, trust signals, and engagement.
-          </Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Nothing rising yet.</Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Stories gain momentum from source coverage and engagement.</Text>
         </View>
       );
     }
 
-    // New / Verified tabs.
     return (
       <View style={styles.emptyContainer}>
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
           {activeTab === 'new' ? 'No events yet.' : 'No verified events yet.'}
         </Text>
         <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-          {activeTab === 'new'
-            ? 'Pull down to refresh.'
-            : 'Verified events appear here once confirmed.'}
+          {activeTab === 'new' ? 'Pull down to refresh.' : 'Verified events appear once confirmed by multiple sources.'}
         </Text>
       </View>
     );
   }
 
-  // RefreshControl: for the Rising tab, pull-to-refresh re-fetches rising data.
   const isRisingActive = activeTab === 'rising' && !isSearching;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
 
+      {/* ── Custom header ─────────────────────────────────────── */}
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: insets.top + 8,
+            backgroundColor: colors.bgElevated,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        {/* Wordmark */}
+        <Text style={[styles.wordmark, { color: colors.iris }]}>IRIS</Text>
+
+        {/* Menu icon — three horizontal lines */}
+        <TouchableOpacity
+          style={styles.menuBtn}
+          onPress={() => navigation.navigate('Profile')}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Open menu"
+        >
+          <View style={[styles.menuLine, { backgroundColor: colors.textSecondary }]} />
+          <View style={[styles.menuLine, { backgroundColor: colors.textSecondary }]} />
+          <View style={[styles.menuLine, { backgroundColor: colors.textSecondary }]} />
+        </TouchableOpacity>
+      </View>
+
       {/* ── Search bar ────────────────────────────────────────── */}
-      <View style={[styles.searchRow, { backgroundColor: colors.bg }]}>
+      <View style={[styles.searchRow, { backgroundColor: colors.bgElevated }]}>
         <View
           style={[
             styles.searchInputWrapper,
-            {
-              backgroundColor: colors.bgInput,
-              borderColor: inputBorder,
-            },
+            { backgroundColor: colors.bgInput, borderColor: searchBorder },
           ]}
         >
-          {/* Lens icon — Unicode, no native dependency */}
           <Text style={[styles.searchIcon, { color: colors.textTertiary }]}>⌕</Text>
           <TextInput
             style={[styles.searchInput, { color: colors.textPrimary }]}
@@ -269,7 +252,6 @@ export function EventListScreen({ navigation }: Props) {
             accessibilityLabel="Search events"
             accessibilityHint="Searches events via backend"
           />
-          {/* Loading spinner replaces clear button while a search request is in-flight. */}
           {isSearching && (
             searchLoading ? (
               <ActivityIndicator size="small" color={colors.textTertiary} />
@@ -287,27 +269,26 @@ export function EventListScreen({ navigation }: Props) {
         </View>
       </View>
 
-      {/* ── Feed tabs ─────────────────────────────────────────── */}
+      {/* ── Segmented tab selector ────────────────────────────── */}
       <View
         style={[
-          styles.tabBar,
-          {
-            borderBottomColor: colors.border,
-            backgroundColor: colors.bg,
-            opacity: isSearching ? 0.45 : 1,
-          },
+          styles.tabRow,
+          { backgroundColor: colors.bgElevated, borderBottomColor: colors.border },
         ]}
         accessibilityRole="tablist"
-        accessibilityLabel="Feed tabs — tap to switch view or clear search"
+        accessibilityLabel="Feed tabs"
       >
         {TABS.map(({ key, label }) => {
           const isActive = !isSearching && activeTab === key;
           return (
             <TouchableOpacity
               key={key}
-              style={styles.tab}
+              style={[
+                styles.tab,
+                isActive && [styles.tabActive, { backgroundColor: colors.iris }],
+              ]}
               onPress={() => handleTabPress(key)}
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               accessibilityRole="tab"
               accessibilityLabel={`${label} events`}
               accessibilityState={{ selected: isActive }}
@@ -316,20 +297,26 @@ export function EventListScreen({ navigation }: Props) {
                 style={[
                   styles.tabLabel,
                   {
-                    color: isActive ? colors.iris : colors.textTertiary,
+                    color: isActive ? '#FFFFFF' : colors.textTertiary,
                     fontWeight: isActive ? '600' : '400',
                   },
                 ]}
               >
                 {label}
               </Text>
-              {isActive && (
-                <View style={[styles.tabIndicator, { backgroundColor: colors.iris }]} />
-              )}
             </TouchableOpacity>
           );
         })}
       </View>
+
+      {/* ── Context row: event count ──────────────────────────── */}
+      {!isSearching && eventCount > 0 && (
+        <View style={[styles.contextRow, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
+          <Text style={[styles.contextText, { color: colors.textTertiary }]}>
+            {eventCount} active {eventCount === 1 ? 'event' : 'events'}
+          </Text>
+        </View>
+      )}
 
       {/* ── Event list ────────────────────────────────────────── */}
       <FlatList
@@ -339,9 +326,6 @@ export function EventListScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <EventCard
             event={item}
-            userId={userId!}
-            initialSignal={signalMap.get(item.id) ?? null}
-            onSignalCast={(type) => setSignal(item.id, type)}
             onPress={() => {
               Keyboard.dismiss();
               navigation.navigate('EventDetail', { eventId: item.id });
@@ -356,7 +340,7 @@ export function EventListScreen({ navigation }: Props) {
           <RefreshControl
             refreshing={isRisingActive ? risingRefreshing : refreshing}
             onRefresh={isRisingActive ? refetchRising : refetch}
-            tintColor={colors.textSecondary}
+            tintColor={colors.iris}
           />
         }
         ListEmptyComponent={renderEmpty()}
@@ -375,59 +359,94 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
+  // ── Custom header ──
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  wordmark: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 4,
+  },
+  menuBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  menuLine: {
+    width: 20,
+    height: 1.5,
+    borderRadius: 1,
+  },
+
   // ── Search bar ──
   searchRow: {
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    height: 36,
-    gap: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
   },
   searchIcon: {
-    fontSize: 16,
-    lineHeight: 18,
+    fontSize: 17,
+    lineHeight: 19,
     marginTop: -1,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     paddingVertical: 0,
   },
   clearIcon: {
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 14,
+    fontSize: 13,
+    fontWeight: '500',
   },
 
-  // ── Feed tabs ──
-  tabBar: {
+  // ── Tab selector ──
+  tabRow: {
     flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   tab: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 11,
-    position: 'relative',
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  tabActive: {
+    // backgroundColor set dynamically
   },
   tabLabel: {
-    fontSize: 13,
+    fontSize: 14,
     letterSpacing: 0.1,
   },
-  tabIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    left: '25%',
-    right: '25%',
-    height: 2,
-    borderRadius: 1,
+
+  // ── Context row ──
+  contextRow: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  contextText: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
 
   // ── List ──
@@ -435,25 +454,25 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 14,
+    padding: 16,
+  },
+  separator: {
+    height: 12,
   },
   centeredFlex: {
     flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 32,
   },
-  centered: {
+  fullCentered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
-  separator: {
-    height: 10,
-  },
 
-  // ── Empty / inline error ──
+  // ── Empty states ──
   emptyContainer: {
     alignItems: 'center',
     gap: 6,
@@ -467,16 +486,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     maxWidth: 260,
+    lineHeight: 18,
   },
 
-  // ── Full-screen error / inline retry ──
+  // ── Error / retry ──
   errorText: {
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 16,
   },
   retryBtn: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
     paddingVertical: 10,
     borderWidth: 1,
     borderRadius: 8,

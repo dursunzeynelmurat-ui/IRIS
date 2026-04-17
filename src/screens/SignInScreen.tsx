@@ -47,8 +47,6 @@ export function SignInScreen() {
       console.error('[SignIn]', authError);
       setError('Invalid email or password. Please try again.');
     }
-    // On success: onAuthStateChange fires → useAuth updates userId → App.tsx
-    // renders the main stack automatically. No manual navigation needed.
 
     setLoading(null);
   }
@@ -115,7 +113,7 @@ export function SignInScreen() {
           value={email}
           onChangeText={(v) => { setEmail(v); setError(null); }}
           placeholder="Email address"
-          placeholderTextColor="#636366"
+          placeholderTextColor="#9AA0A6"
           keyboardType="email-address"
           textContentType="emailAddress"
           autoCapitalize="none"
@@ -131,7 +129,7 @@ export function SignInScreen() {
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
           placeholder="Password"
-          placeholderTextColor="#636366"
+          placeholderTextColor="#9AA0A6"
           secureTextEntry={true}
           textContentType="password"
           autoCapitalize="none"
@@ -153,7 +151,7 @@ export function SignInScreen() {
           accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signIn'
-            ? <ActivityIndicator color="#0d0d0d" size="small" />
+            ? <ActivityIndicator color="#FFFFFF" size="small" />
             : <Text style={styles.buttonText}>Sign In</Text>
           }
         </TouchableOpacity>
@@ -168,7 +166,7 @@ export function SignInScreen() {
           accessibilityState={{ disabled: !!busy }}
         >
           {loading === 'signUp'
-            ? <ActivityIndicator color="#f2f2f2" size="small" />
+            ? <ActivityIndicator color="#1A73E8" size="small" />
             : <Text style={styles.buttonSecondaryText}>Sign Up</Text>
           }
         </TouchableOpacity>
@@ -180,7 +178,7 @@ export function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#FFFFFF',
   },
   form: {
     flexGrow: 1,
@@ -192,51 +190,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#FFFFFF',
   },
   wordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#f2f2f2',
+    color: '#1A73E8',
     letterSpacing: 6,
     marginBottom: 6,
   },
   tagline: {
     fontSize: 13,
-    color: '#636366',
+    color: '#9AA0A6',
     letterSpacing: 0.3,
     marginBottom: 36,
   },
   title: {
     fontSize: 26,
     fontWeight: '700',
-    color: '#f2f2f2',
+    color: '#1A1A2E',
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 15,
-    color: '#8e8e93',
+    color: '#5F6368',
     marginBottom: 28,
     lineHeight: 22,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#3a3a3c',
+    borderColor: '#E8EAED',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 13,
     fontSize: 15,
     marginBottom: 12,
-    backgroundColor: '#1c1c1e',
-    color: '#f2f2f2',
+    backgroundColor: '#F2F4F7',
+    color: '#1A1A2E',
   },
   error: {
     fontSize: 13,
-    color: '#ff453a',
+    color: '#C5221F',
     marginBottom: 12,
   },
   button: {
-    backgroundColor: '#f2f2f2',
+    backgroundColor: '#1A73E8',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -244,7 +242,7 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: {
     borderWidth: 1,
-    borderColor: '#3a3a3c',
+    borderColor: '#1A73E8',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -253,12 +251,12 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   buttonText: {
-    color: '#0d0d0d',
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
   },
   buttonSecondaryText: {
-    color: '#f2f2f2',
+    color: '#1A73E8',
     fontSize: 15,
     fontWeight: '600',
   },
@@ -268,7 +266,7 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#aeaeb2',
+    color: '#1A73E8',
     textDecorationLine: 'underline',
   },
 });

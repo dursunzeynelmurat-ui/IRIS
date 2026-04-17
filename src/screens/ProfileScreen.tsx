@@ -175,9 +175,9 @@ export function ProfileScreen({ navigation }: Props) {
             accessibilityState={{ disabled: signingOut }}
           >
             {signingOut ? (
-              <ActivityIndicator size="small" color={colors.iris} />
+              <ActivityIndicator size="small" color={colors.danger} />
             ) : (
-              <Text style={[styles.signOutLabel, { color: colors.iris }]}>
+              <Text style={[styles.signOutLabel, { color: colors.danger }]}>
                 Sign Out
               </Text>
             )}

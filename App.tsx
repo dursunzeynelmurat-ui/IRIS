@@ -53,10 +53,10 @@ function AppContent() {
   if (loading) {
     return (
       <>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <View style={styles.splash}>
           <Text style={styles.splashWordmark}>IRIS</Text>
-          <ActivityIndicator size="small" color="#636366" style={styles.splashSpinner} />
+          <ActivityIndicator size="small" color="#9AA0A6" style={styles.splashSpinner} />
         </View>
       </>
     );
@@ -65,7 +65,7 @@ function AppContent() {
   if (!userId) {
     return (
       <>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <SignInScreen />
       </>
     );
@@ -82,9 +82,7 @@ function AppContent() {
             name="EventList"
             component={EventListScreen}
             options={{
-              title: 'IRIS',
-              headerTitleStyle: styles.navTitle,
-              headerShadowVisible: false,
+              headerShown: false,
               animation: 'none',
             }}
           />
@@ -167,22 +165,16 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#FFFFFF',
   },
   splashWordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#e5193e',
+    color: '#1A73E8',
     letterSpacing: 8,
   },
   splashSpinner: {
     marginTop: 28,
   },
 
-  // ── Navigation header title ──
-  navTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 5,
-  },
 });

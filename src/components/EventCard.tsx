@@ -1,130 +1,97 @@
-import { useEffect, useRef, useState } from 'react';
 import {
+  Image,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SignalButton } from './SignalButton';
-import { StatusBadge } from './StatusBadge';
-import { TrustRing } from './TrustRing';
 import { useTheme } from '../context/ThemeContext';
+import { statusColors, scoreColor, STATUS_LABEL } from '../lib/eventUtils';
 import { formatRelativeTime } from '../lib/formatRelativeTime';
-import { STATUS_LABEL } from '../lib/eventUtils';
-import { castSignal } from '../services/signalService';
-import { Event, SignalType } from '../types';
+import { Event } from '../types';
 
 // ── Component ─────────────────────────────────────────────────
+// Cards are entry points — not action surfaces.
+// No signal buttons on cards; signals live only on the detail screen.
 
 interface EventCardProps {
   event: Event;
-  userId: string;                   // always non-null — list screen is auth-gated
-  initialSignal: SignalType | null; // pre-seeded by bulk fetch in EventListScreen
-  onSignalCast: (type: SignalType) => void; // notifies parent to keep map current
   onPress: () => void;
 }
 
-export function EventCard({
-  event,
-  userId,
-  initialSignal,
-  onSignalCast,
-  onPress,
-}: EventCardProps) {
-  const { colors } = useTheme();
+export function EventCard({ event, onPress }: EventCardProps) {
+  const { colors, resolved } = useTheme();
 
-  // Signal state is seeded from the bulk fetch — no per-card DB query.
-  const [currentSignal, setCurrentSignal] = useState<SignalType | null>(initialSignal);
-  const [submitting, setSubmitting] = useState(false);
+  const trustScore   = event.trust_score ?? 50;
+  const trustColor   = scoreColor(trustScore, resolved);
+  const statusColor  = statusColors(resolved)[event.status];
+  const statusLabel  = STATUS_LABEL[event.status] ?? event.status;
+  const sourceCount  = event.source_count ?? 0;
+  const time         = formatRelativeTime(event.created_at);
 
-  // hasLocalSubmit tracks whether the user has interacted with THIS card in the
-  // current mount. Before any local submit, initialSignal changes (e.g. when the
-  // parent's bulk fetch resolves after the FlatList has already rendered) are
-  // synced into local state. Once the user has submitted, local state is
-  // authoritative and prop changes are ignored to preserve optimistic updates.
-  const hasLocalSubmit = useRef(false);
-
-  useEffect(() => {
-    if (!hasLocalSubmit.current) {
-      setCurrentSignal(initialSignal);
-    }
-  }, [initialSignal]);
-
-  const trustScore = event.trust_score ?? 50;
-
-  async function submitSignal(type: SignalType) {
-    if (type === currentSignal) return;
-    if (submitting) return;
-    hasLocalSubmit.current = true;
-
-    const previous = currentSignal;
-    setCurrentSignal(type); // optimistic update
-    setSubmitting(true);
-
-    try {
-      await castSignal(userId, event.id, type);
-      onSignalCast(type);
-    } catch (err) {
-      console.error('[EventCard] castSignal:', err);
-      setCurrentSignal(previous); // revert
-      hasLocalSubmit.current = false;
-    }
-
-    setSubmitting(false);
-  }
+  // Image placeholder tint — status color at ~10% opacity, gives visual identity
+  // before backend provides actual image_url.
+  const placeholderTint = statusColor + '18';
 
   return (
     <TouchableOpacity
-      style={[styles.card, { backgroundColor: colors.bgElevated, borderColor: colors.border }]}
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.bgElevated,
+          borderColor: colors.border,
+          shadowColor: colors.textPrimary,
+        },
+      ]}
       onPress={onPress}
-      activeOpacity={0.75}
+      activeOpacity={0.72}
       accessibilityRole="button"
-      accessibilityLabel={`${event.title}, ${STATUS_LABEL[event.status] ?? event.status}`}
+      accessibilityLabel={`${event.title}, ${statusLabel}, Trust ${trustScore}`}
       accessibilityHint="Opens event details"
     >
-      {/* Title */}
-      <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
-        {event.title}
-      </Text>
+      {/* ── Hero image area ── */}
+      {event.image_url ? (
+        <Image
+          source={{ uri: event.image_url }}
+          style={styles.heroImage}
+          resizeMode="cover"
+          accessibilityLabel="Event photo"
+        />
+      ) : (
+        <View style={[styles.heroPlaceholder, { backgroundColor: placeholderTint }]} />
+      )}
 
-      {/* Status badge + trust ring */}
-      <View style={styles.cardMeta}>
-        <StatusBadge status={event.status} />
-        <View style={styles.metaSpacer} />
-        <TrustRing score={trustScore} size="sm" />
-      </View>
-
-      {/* Source count + age */}
-      <View style={styles.cardFooter}>
-        <Text style={[styles.footerDetail, { color: colors.textTertiary }]}>
-          {event.source_count === 1 ? '1 source' : `${event.source_count} sources`}
+      {/* ── Text content ── */}
+      <View style={styles.content}>
+        {/* Title — primary editorial element */}
+        <Text
+          style={[styles.title, { color: colors.textPrimary }]}
+          numberOfLines={2}
+        >
+          {event.title}
         </Text>
-        <Text style={[styles.footerDot, { color: colors.borderStrong }]}>·</Text>
-        <Text style={[styles.footerDetail, { color: colors.textTertiary }]}>
-          {formatRelativeTime(event.created_at)}
-        </Text>
-      </View>
 
-      {/* Divider */}
-      <View style={[styles.actionsDivider, { backgroundColor: colors.border }]} />
+        {/* Metadata row: Trust N • Status • Time */}
+        <View style={styles.metaRow}>
+          <Text style={[styles.metaTrust, { color: trustColor }]}>
+            Trust {trustScore}
+          </Text>
+          <Text style={[styles.metaSep, { color: colors.textTertiary }]}> • </Text>
+          <Text style={[styles.metaStatus, { color: statusColor }]}>
+            {statusLabel}
+          </Text>
+          <Text style={[styles.metaSep, { color: colors.textTertiary }]}> • </Text>
+          <Text style={[styles.metaTime, { color: colors.textTertiary }]}>
+            {time}
+          </Text>
+        </View>
 
-      {/* Signal pills */}
-      <View style={styles.actions}>
-        {(['confirm', 'dispute'] as SignalType[]).map((type) => {
-          const isSelected = currentSignal === type;
-          return (
-            <SignalButton
-              key={type}
-              type={type}
-              size="compact"
-              active={isSelected}
-              loading={!!(submitting && isSelected)}
-              disabled={!!(isSelected || submitting)}
-              faded={!!(currentSignal !== null && !isSelected)}
-              onPress={() => submitSignal(type)}
-            />
-          );
-        })}
+        {/* Source count — one quiet line below metadata */}
+        {sourceCount > 0 && (
+          <Text style={[styles.sources, { color: colors.textTertiary }]}>
+            {sourceCount === 1 ? '1 source' : `${sourceCount} sources`}
+          </Text>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -134,48 +101,67 @@ export function EventCard({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    // Soft shadow — premium but not showy.
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  cardTitle: {
-    fontSize: 16,
+
+  // ── Image area ──
+  heroImage: {
+    width: '100%',
+    height: 176,
+  },
+  heroPlaceholder: {
+    width: '100%',
+    height: 140,
+  },
+
+  // ── Content area ──
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 16,
+    gap: 4,
+  },
+
+  // ── Title ──
+  title: {
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 24,
+    letterSpacing: -0.2,
+    marginBottom: 4,
+  },
+
+  // ── Metadata row ──
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  metaTrust: {
+    fontSize: 13,
     fontWeight: '600',
-    lineHeight: 22,
-    marginBottom: 12,
+  },
+  metaSep: {
+    fontSize: 13,
+  },
+  metaStatus: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  metaTime: {
+    fontSize: 13,
   },
 
-  // ── Meta row (badge + ring) ──
-  cardMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  metaSpacer: {
-    flex: 1,
-  },
-
-  // ── Footer ──
-  cardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-  },
-  footerDetail: {
-    fontSize: 11,
-  },
-  footerDot: {
-    fontSize: 11,
-  },
-
-  // ── Signal row ──
-  actionsDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginBottom: 10,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 8,
+  // ── Source count ──
+  sources: {
+    fontSize: 12,
+    marginTop: 2,
   },
 });

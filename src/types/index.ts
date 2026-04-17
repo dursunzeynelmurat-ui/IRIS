@@ -12,9 +12,10 @@ export interface Event {
   id: string;
   title: string;
   status: EventStatus;
-  trust_score: number; // 0–100
+  trust_score: number;   // 0–100, source-derived
   source_count: number;
   created_at: string;
+  image_url?: string | null;  // optional — when backend provides it, renders automatically
 }
 
 // public.event_updates

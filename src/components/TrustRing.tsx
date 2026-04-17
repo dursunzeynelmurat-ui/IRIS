@@ -4,13 +4,14 @@ import { scoreColor } from '../lib/eventUtils';
 
 interface TrustRingProps {
   score: number;
-  /** 'sm' (~38px, for feed cards); 'md' (~52px, for detail screen). Default: 'sm'. */
-  size?: 'sm' | 'md';
+  /** 'sm' (~38px, feed cards); 'md' (~52px, detail meta); 'lg' (~64px, trust summary card). Default: 'sm'. */
+  size?: 'sm' | 'md' | 'lg';
 }
 
 const SIZE_CONFIG = {
   sm: { diameter: 38, strokeWidth: 3,   fontSize: 11 },
   md: { diameter: 52, strokeWidth: 3.5, fontSize: 14 },
+  lg: { diameter: 64, strokeWidth: 4.5, fontSize: 20 },
 };
 
 /**

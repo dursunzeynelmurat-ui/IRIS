@@ -22,46 +22,55 @@ export interface ThemeColors {
   textSecondary: string;
   textTertiary: string;
 
-  // Brand accent — IRIS red.
-  // The color tokens here are the single source of truth for brand expression.
+  // Brand accent — IRIS blue.
   iris: string;
   irisSubtle: string;
+
+  // Semantic danger — dispute actions, errors, destructive states.
+  danger: string;
+  dangerSubtle: string;
 }
 
 // ── Color palettes ────────────────────────────────────────────
 
-const DARK: ThemeColors = {
-  bg:            '#0d0d0d',
-  bgElevated:    '#1c1c1e',
-  bgInput:       '#1c1c1e',
-  bgOverlay:     '#2c2c2e',
+const LIGHT: ThemeColors = {
+  bg:            '#FFFFFF',
+  bgElevated:    '#FFFFFF',
+  bgInput:       '#F2F4F7',
+  bgOverlay:     '#EEF0F4',
 
-  border:        '#2c2c2e',
-  borderStrong:  '#3a3a3c',
+  border:        '#E8EAED',
+  borderStrong:  '#DADCE0',
 
-  textPrimary:   '#f2f2f2',
-  textSecondary: '#8e8e93',
-  textTertiary:  '#636366',
+  textPrimary:   '#1A1A2E',
+  textSecondary: '#5F6368',
+  textTertiary:  '#9AA0A6',
 
-  iris:          '#e5193e',
-  irisSubtle:    '#e5193e22',
+  iris:          '#1A73E8',
+  irisSubtle:    '#1A73E815',
+
+  danger:        '#C5221F',
+  dangerSubtle:  '#C5221F15',
 };
 
-const LIGHT: ThemeColors = {
-  bg:            '#f2f2f7',
-  bgElevated:    '#ffffff',
-  bgInput:       '#ffffff',
-  bgOverlay:     '#e5e5ea',
+const DARK: ThemeColors = {
+  bg:            '#0D1117',
+  bgElevated:    '#161B22',
+  bgInput:       '#21262D',
+  bgOverlay:     '#2D333B',
 
-  border:        '#c6c6c8',
-  borderStrong:  '#aeaeb2',
+  border:        '#30363D',
+  borderStrong:  '#484F58',
 
-  textPrimary:   '#0d0d0d',
-  textSecondary: '#48484a',
-  textTertiary:  '#8e8e93',
+  textPrimary:   '#E6EDF3',
+  textSecondary: '#8B949E',
+  textTertiary:  '#6E7681',
 
-  iris:          '#c90f2e',
-  irisSubtle:    '#c90f2e18',
+  iris:          '#58A6FF',
+  irisSubtle:    '#58A6FF15',
+
+  danger:        '#FF453A',
+  dangerSubtle:  '#FF453A15',
 };
 
 // ── Context ───────────────────────────────────────────────────
@@ -81,23 +90,20 @@ interface ThemeProviderProps {
   children: ReactNode;
   /**
    * Backend-persisted preference from useUserPreferences(). When provided,
-   * the provider syncs to it on mount and whenever it changes (e.g. after
-   * the initial fetch resolves or the user signs in).
+   * the provider syncs to it on mount and whenever it changes.
    */
   savedPreference?: ThemePreference;
   /**
-   * Called whenever the user selects a new preference. The provider applies
-   * the change optimistically and reverts on failure (when this throws).
-   * Wired to useUserPreferences().updateTheme in ThemedApp.
+   * Called whenever the user selects a new preference. Optimistic — reverts
+   * automatically if this throws.
    */
   onSavePreference?: (p: ThemePreference) => Promise<void>;
 }
 
 export function ThemeProvider({ children, savedPreference, onSavePreference }: ThemeProviderProps) {
-  const systemScheme = useColorScheme(); // 'light' | 'dark' | null
+  const systemScheme = useColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>(savedPreference ?? 'system');
 
-  // Sync to backend-loaded preference whenever it arrives or changes.
   useEffect(() => {
     if (savedPreference !== undefined) {
       setPreferenceState(savedPreference);
@@ -110,15 +116,12 @@ export function ThemeProvider({ children, savedPreference, onSavePreference }: T
     return systemScheme === 'light' ? 'light' : 'dark';
   }, [preference, systemScheme]);
 
-  // LIGHT and DARK are module-level constants (stable references).
-  // colors reference is therefore stable unless resolved changes.
   const colors = resolved === 'light' ? LIGHT : DARK;
 
   const setPreference = useCallback((p: ThemePreference) => {
     const previous = preference;
     setPreferenceState(p);
     if (onSavePreference) {
-      // Optimistic update — revert on backend failure.
       onSavePreference(p).catch(() => {
         setPreferenceState(previous);
       });
