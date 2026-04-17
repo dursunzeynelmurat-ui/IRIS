@@ -71,14 +71,13 @@ const SecureStoreAdapter = {
 
 // NOTE: expo-secure-store's TurboModule has a JSI boolean/string type
 // mismatch in Expo Go + RN 0.81 new arch that fires before JS can catch it.
-// persistSession: false prevents any storage calls on startup, eliminating
-// the crash. Re-enable (set true + uncomment storage) in a production build
-// where native modules compile correctly against the target RN version.
+// In dev/Expo-Go builds we disable session persistence to avoid the crash.
+// Production builds (where native modules compile correctly) enable SecureStore.
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // storage: SecureStoreAdapter,   // re-enable for production builds
+    storage: __DEV__ ? undefined : SecureStoreAdapter,
     autoRefreshToken: true,
-    persistSession: false,
+    persistSession: !__DEV__,
     detectSessionInUrl: false,
   },
 });

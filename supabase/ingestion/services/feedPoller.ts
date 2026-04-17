@@ -161,37 +161,38 @@ export async function updateFeedHealth(
   success: boolean,
   errorMessage?: string,
 ): Promise<void> {
-  // Fetch current health_score to compute the new value.
-  const { data: current } = await client
-    .from('source_feeds')
-    .select('health_score')
-    .eq('id', feedId)
-    .single();
-
-  const currentScore = (current as { health_score: number } | null)?.health_score ?? 50;
-
+  // Use a single RPC call to atomically update health_score on the DB side,
+  // avoiding the read-then-write race when two workers run concurrently.
   const now = new Date().toISOString();
-  const updates: Record<string, unknown> = {
-    last_fetched_at: now,
-    health_score: success
-      ? Math.min(100, currentScore + 10)
-      : Math.max(0, currentScore - 20),
-  };
 
-  if (success) {
-    updates.last_success_at = now;
-  } else {
-    updates.last_error_at = now;
-    updates.last_error_message = errorMessage ?? 'unknown error';
-  }
-
-  const { error } = await client
-    .from('source_feeds')
-    .update(updates)
-    .eq('id', feedId);
+  const { error } = await client.rpc('update_feed_health', {
+    p_feed_id: feedId,
+    p_success: success,
+    p_error_message: errorMessage ?? null,
+    p_now: now,
+  });
 
   if (error) {
-    console.error(`[feedPoller] updateFeedHealth ${feedId}: ${error.message}`);
+    // update_feed_health RPC may not exist yet (migration 035 adds it).
+    // Fall back to a simple non-atomic update so older DB versions still work.
+    const updates: Record<string, unknown> = {
+      last_fetched_at: now,
+    };
+    if (success) {
+      updates.last_success_at = now;
+    } else {
+      updates.last_error_at = now;
+      updates.last_error_message = errorMessage ?? 'unknown error';
+    }
+    // Clamp within DB: LEAST/GREATEST not available in JS client, use raw SQL via rpc fallback.
+    const { error: fallbackErr } = await client
+      .from('source_feeds')
+      .update(updates)
+      .eq('id', feedId);
+
+    if (fallbackErr) {
+      console.error(`[feedPoller] updateFeedHealth ${feedId}: ${fallbackErr.message}`);
+    }
   }
 }
 

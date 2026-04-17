@@ -401,18 +401,63 @@ export function parseFeed(xml: string): ParsedFeed {
  * @throws Error with the URL included in the message if the request fails or
  *         times out.
  */
+const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB — guards against oversized/malicious feeds
+
 export async function fetchFeed(url: string, timeoutMs = 10_000): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'IRIS-Ingestion/1.0 (news aggregation bot; contact: admin@iris.app)',
+        'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+      },
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to fetch feed at ${url}: HTTP ${response.status} ${response.statusText}`,
       );
     }
-    return await response.text();
+
+    // Reject oversized responses before buffering into memory.
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && parseInt(contentLength, 10) > MAX_FEED_BYTES) {
+      throw new Error(
+        `Feed at ${url} exceeds size limit (content-length: ${contentLength})`,
+      );
+    }
+
+    // Stream with a running byte counter so we catch feeds that don't send Content-Length.
+    const reader = response.body?.getReader();
+    if (!reader) {
+      // Fallback for environments without streaming body support.
+      const text = await response.text();
+      if (text.length > MAX_FEED_BYTES) {
+        throw new Error(`Feed at ${url} exceeds ${MAX_FEED_BYTES} byte limit`);
+      }
+      return text;
+    }
+
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_FEED_BYTES) {
+        reader.cancel();
+        throw new Error(`Feed at ${url} exceeds ${MAX_FEED_BYTES} byte limit`);
+      }
+      chunks.push(value);
+    }
+
+    return chunks.map((c) => decoder.decode(c, { stream: true })).join('') +
+           decoder.decode(); // flush
+
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Fetch timed out after ${timeoutMs}ms for feed at ${url}`);

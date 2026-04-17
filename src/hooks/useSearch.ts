@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Event } from '../types';
+import type { EventCard } from '../types';
 
 interface UseSearchResult {
-  results: Event[];
+  results: EventCard[];
   searching: boolean;
   error: string | null;
   query: string;
@@ -27,7 +27,7 @@ interface UseSearchResult {
  */
 export function useSearch(debounceMs = 300): UseSearchResult {
   const [query, setQueryState] = useState('');
-  const [results, setResults]  = useState<Event[]>([]);
+  const [results, setResults]  = useState<EventCard[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError]         = useState<string | null>(null);
   const timerRef                  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,7 +60,7 @@ export function useSearch(debounceMs = 300): UseSearchResult {
         setError(err.message);
         setResults([]);
       } else {
-        setResults((data as Event[]) ?? []);
+        setResults((data as EventCard[]) ?? []);
         setError(null);
       }
       setSearching(false);
