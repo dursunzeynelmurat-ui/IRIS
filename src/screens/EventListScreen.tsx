@@ -18,6 +18,7 @@ import { useTheme } from '../context/ThemeContext';
 import { MIN_QUERY_LEN, useEventSearch } from '../hooks/useEventSearch';
 import { useEvents } from '../hooks/useEvents';
 import { useRisingEvents } from '../hooks/useRisingEvents';
+import { useVerifiedEvents } from '../hooks/useVerifiedEvents';
 import { Event } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -38,26 +39,33 @@ const TABS: Tab[] = [
   { key: 'rising',   label: 'Rising'   },
 ];
 
-// ── Tab filtering ─────────────────────────────────────────────
-
-function filterByTab(events: Event[], tab: Exclude<FeedTab, 'rising'>): Event[] {
-  switch (tab) {
-    case 'new':
-      return [...events].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-    case 'verified':
-      return events.filter((e) => e.status === 'verified');
-  }
-}
-
 // ── Screen ────────────────────────────────────────────────────
 
 export function EventListScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const [activeTab, setActiveTab] = useState<FeedTab>('new');
+
+  // New: all events ordered by latest activity (backend-ordered)
   const { events, loading, refreshing, error, refetch } = useEvents();
-  const { colors }                                       = useTheme();
-  const [activeTab, setActiveTab]                        = useState<FeedTab>('new');
+
+  // Verified: backend-filtered to status='verified', no local slice
+  const {
+    events: verifiedEvents,
+    loading: verifiedLoading,
+    refreshing: verifiedRefreshing,
+    error: verifiedError,
+    refetch: refetchVerified,
+  } = useVerifiedEvents();
+
+  // Rising: backend RPC
+  const {
+    events: risingEvents,
+    loading: risingLoading,
+    refreshing: risingRefreshing,
+    error: risingError,
+    refetch: refetchRising,
+  } = useRisingEvents();
 
   const {
     query: searchQuery,
@@ -69,21 +77,15 @@ export function EventListScreen({ navigation }: Props) {
     clearQuery: clearSearch,
   } = useEventSearch();
 
-  const {
-    events: risingEvents,
-    loading: risingLoading,
-    refreshing: risingRefreshing,
-    error: risingError,
-    refetch: refetchRising,
-  } = useRisingEvents();
-
   // ── Displayed data ────────────────────────────────────────────
 
   const displayed: Event[] = isSearching
     ? searchResults
     : activeTab === 'rising'
       ? risingEvents
-      : filterByTab(events, activeTab);
+      : activeTab === 'verified'
+        ? verifiedEvents
+        : events;
 
   function handleClearSearch() {
     clearSearch();
@@ -129,6 +131,22 @@ export function EventListScreen({ navigation }: Props) {
 
   // ── Active event count ────────────────────────────────────────
   const eventCount = events.length;
+
+  // ── Per-tab refresh state ──────────────────────────────────────
+  const isRisingActive   = activeTab === 'rising'   && !isSearching;
+  const isVerifiedActive = activeTab === 'verified' && !isSearching;
+
+  const activeRefreshing = isRisingActive
+    ? risingRefreshing
+    : isVerifiedActive
+      ? verifiedRefreshing
+      : refreshing;
+
+  const activeRefetch = isRisingActive
+    ? refetchRising
+    : isVerifiedActive
+      ? refetchVerified
+      : refetch;
 
   // ── Empty state renderer ──────────────────────────────────────
   function renderEmpty() {
@@ -185,19 +203,41 @@ export function EventListScreen({ navigation }: Props) {
       );
     }
 
+    if (activeTab === 'verified') {
+      if (verifiedLoading) return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="small" color={colors.iris} />
+        </View>
+      );
+      if (verifiedError) return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Unable to load verified events.</Text>
+          <TouchableOpacity
+            style={[styles.retryBtn, { borderColor: colors.iris, marginTop: 12 }]}
+            onPress={refetchVerified}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading verified events"
+          >
+            <Text style={[styles.retryText, { color: colors.iris }]}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No verified events yet.</Text>
+          <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Verified events are confirmed by multiple independent sources.</Text>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-          {activeTab === 'new' ? 'No events yet.' : 'No verified events yet.'}
-        </Text>
-        <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
-          {activeTab === 'new' ? 'Pull down to refresh.' : 'Verified events appear once confirmed by multiple sources.'}
-        </Text>
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No events yet.</Text>
+        <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Pull down to refresh.</Text>
       </View>
     );
   }
-
-  const isRisingActive = activeTab === 'rising' && !isSearching;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -310,7 +350,7 @@ export function EventListScreen({ navigation }: Props) {
       </View>
 
       {/* ── Context row: event count ──────────────────────────── */}
-      {!isSearching && eventCount > 0 && (
+      {!isSearching && activeTab === 'new' && eventCount > 0 && (
         <View style={[styles.contextRow, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
           <Text style={[styles.contextText, { color: colors.textTertiary }]}>
             {eventCount} active {eventCount === 1 ? 'event' : 'events'}
@@ -338,8 +378,8 @@ export function EventListScreen({ navigation }: Props) {
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
-            refreshing={isRisingActive ? risingRefreshing : refreshing}
-            onRefresh={isRisingActive ? refetchRising : refetch}
+            refreshing={activeRefreshing}
+            onRefresh={activeRefetch}
             tintColor={colors.iris}
           />
         }

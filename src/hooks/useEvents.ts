@@ -28,6 +28,7 @@ export function useEvents(): UseEventsResult {
     const { data, error: dbError } = await supabase
       .from('events')
       .select('*')
+      .order('latest_update_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
 
     if (dbError) {

@@ -12,10 +12,12 @@ export interface Event {
   id: string;
   title: string;
   status: EventStatus;
-  trust_score: number;   // 0–100, source-derived
+  trust_score: number;           // 0–100, source-derived
   source_count: number;
   created_at: string;
-  image_url?: string | null;  // optional — when backend provides it, renders automatically
+  latest_update_at?: string | null; // maintained by trigger; use for recency display
+  summary?: string | null;          // short overview shown on cards and detail header
+  image_url?: string | null;        // optional — renders automatically when backend provides it
 }
 
 // public.event_updates
@@ -26,6 +28,8 @@ export interface EventUpdate {
   source_name: string;
   source_url: string | null;
   created_at: string;
+  headline?: string | null;     // short editor-written summary line; primary display when present
+  update_type?: string | null;  // 'development' | 'breaking' | 'context' | 'correction' | null
 }
 
 // public.signals

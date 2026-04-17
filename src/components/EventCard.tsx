@@ -27,10 +27,10 @@ export function EventCard({ event, onPress }: EventCardProps) {
   const statusColor  = statusColors(resolved)[event.status];
   const statusLabel  = STATUS_LABEL[event.status] ?? event.status;
   const sourceCount  = event.source_count ?? 0;
-  const time         = formatRelativeTime(event.created_at);
+  // Use latest_update_at when available — shows when the event was last active,
+  // not just when it was first ingested.
+  const time         = formatRelativeTime(event.latest_update_at ?? event.created_at);
 
-  // Image placeholder tint — status color at ~10% opacity, gives visual identity
-  // before backend provides actual image_url.
   const placeholderTint = statusColor + '18';
 
   return (
@@ -71,6 +71,16 @@ export function EventCard({ event, onPress }: EventCardProps) {
           {event.title}
         </Text>
 
+        {/* Summary — one-line context when available */}
+        {!!event.summary && (
+          <Text
+            style={[styles.summary, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {event.summary}
+          </Text>
+        )}
+
         {/* Metadata row: Trust N • Status • Time */}
         <View style={styles.metaRow}>
           <Text style={[styles.metaTrust, { color: trustColor }]}>
@@ -86,7 +96,7 @@ export function EventCard({ event, onPress }: EventCardProps) {
           </Text>
         </View>
 
-        {/* Source count — one quiet line below metadata */}
+        {/* Source count — quiet line below metadata */}
         {sourceCount > 0 && (
           <Text style={[styles.sources, { color: colors.textTertiary }]}>
             {sourceCount === 1 ? '1 source' : `${sourceCount} sources`}
@@ -104,7 +114,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
-    // Soft shadow — premium but not showy.
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 6,
@@ -135,6 +144,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 24,
     letterSpacing: -0.2,
+    marginBottom: 2,
+  },
+
+  // ── Summary ──
+  summary: {
+    fontSize: 14,
+    lineHeight: 20,
     marginBottom: 4,
   },
 

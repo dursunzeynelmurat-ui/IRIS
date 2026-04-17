@@ -67,14 +67,21 @@ function LiveUpdateBanner({ count, onView }: { count: number; onView: () => void
 
 function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean }) {
   const { colors, resolved } = useTheme();
-  const hasLink  = !!update.source_url;
+  const hasLink   = !!update.source_url;
   const linkColor = resolved === 'dark' ? '#58A6FF' : '#1A73E8';
+
+  // update_type drives dot color — restrained; only breaking and correction get distinct colors
+  const dotColor = (() => {
+    if (update.update_type === 'breaking')    return colors.iris;
+    if (update.update_type === 'correction')  return resolved === 'dark' ? '#FF9F0A' : '#B25000';
+    return colors.borderStrong;
+  })();
 
   return (
     <View style={styles.timelineItem}>
       {/* Gutter */}
       <View style={styles.timelineGutter}>
-        <View style={[styles.timelineDot, { backgroundColor: colors.borderStrong }]} />
+        <View style={[styles.timelineDot, { backgroundColor: dotColor }]} />
         {!isLast && (
           <View style={[styles.timelineConnector, { backgroundColor: colors.border }]} />
         )}
@@ -107,10 +114,21 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
           </Text>
         </View>
 
-        {/* Content */}
-        <Text style={[styles.timelineContent, { color: colors.textPrimary }]}>
-          {update.content}
-        </Text>
+        {/* Headline (primary) + content (body), or content alone */}
+        {update.headline ? (
+          <>
+            <Text style={[styles.timelineHeadline, { color: colors.textPrimary }]}>
+              {update.headline}
+            </Text>
+            <Text style={[styles.timelineContent, { color: colors.textSecondary }]}>
+              {update.content}
+            </Text>
+          </>
+        ) : (
+          <Text style={[styles.timelineContent, { color: colors.textPrimary }]}>
+            {update.content}
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -120,7 +138,7 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
 
 function SourceRow({ source, isLast }: { source: EventUpdate; isLast: boolean }) {
   const { colors, resolved } = useTheme();
-  const hasLink  = !!source.source_url;
+  const hasLink   = !!source.source_url;
   const linkColor = resolved === 'dark' ? '#58A6FF' : '#1A73E8';
 
   return (
@@ -156,9 +174,9 @@ function SourceRow({ source, isLast }: { source: EventUpdate; isLast: boolean })
   );
 }
 
-// ── Signal footer (at very bottom, after scrolling through updates) ────────
+// ── Community signal section (inside scroll, after updates) ───
 
-function SignalFooter({ eventId, userId }: { eventId: string; userId: string }) {
+function SignalSection({ eventId, userId }: { eventId: string; userId: string }) {
   const { colors } = useTheme();
   const { currentSignal, fetchLoading, submitting, error, submitSignal } = useUserSignal(
     eventId,
@@ -166,12 +184,7 @@ function SignalFooter({ eventId, userId }: { eventId: string; userId: string }) 
   );
 
   return (
-    <View
-      style={[
-        styles.signalFooter,
-        { borderTopColor: colors.border, backgroundColor: colors.bgElevated },
-      ]}
-    >
+    <View style={[styles.signalSection, { borderTopColor: colors.border }]}>
       <Text style={[styles.signalLabel, { color: colors.textTertiary }]}>
         COMMUNITY SIGNAL
       </Text>
@@ -301,9 +314,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
   const statusColor  = statusColors(resolved)[event.status];
   const statusLabel  = STATUS_LABEL[event.status] ?? event.status;
   const sourceLabel  = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
-
-  // Placeholder tint for hero image when image_url is absent
-  const heroTint = statusColor + '22';
+  const heroTint     = statusColor + '22';
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
@@ -339,7 +350,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
           <View style={[styles.heroPlaceholder, { backgroundColor: heroTint }]} />
         )}
 
-        {/* ── Title + inline metadata ── */}
+        {/* ── Title + inline metadata + summary ── */}
         <View style={styles.titleSection}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>
             {event.title}
@@ -354,12 +365,17 @@ export function EventDetailScreen({ route, navigation }: Props) {
             </Text>
             <Text style={[styles.metaSep, { color: colors.textTertiary }]}> • </Text>
             <Text style={[styles.metaTime, { color: colors.textTertiary }]}>
-              {formatRelativeTime(event.created_at)}
+              {formatRelativeTime(event.latest_update_at ?? event.created_at)}
             </Text>
           </View>
           <Text style={[styles.sourceCount, { color: colors.textTertiary }]}>
             {sourceLabel}
           </Text>
+          {!!event.summary && (
+            <Text style={[styles.detailSummary, { color: colors.textSecondary }]}>
+              {event.summary}
+            </Text>
+          )}
         </View>
 
         {/* ── Tab selector: Updates / Sources ── */}
@@ -434,12 +450,12 @@ export function EventDetailScreen({ route, navigation }: Props) {
             )}
           </View>
         )}
-      </ScrollView>
 
-      {/* ── Signal footer — always below scroll, after reading ── */}
-      {userId && (
-        <SignalFooter eventId={event.id} userId={userId} />
-      )}
+        {/* ── Community signal — encountered after scrolling through context ── */}
+        {userId && (
+          <SignalSection eventId={event.id} userId={userId} />
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -454,7 +470,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 24,
+    paddingBottom: 48,
   },
   centered: {
     flex: 1,
@@ -551,6 +567,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
+  detailSummary: {
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+  },
 
   // ── Detail tabs ──
   detailTabs: {
@@ -623,6 +644,12 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     paddingTop: 1,
   },
+  timelineHeadline: {
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 22,
+    marginBottom: 4,
+  },
   timelineContent: {
     fontSize: 15,
     lineHeight: 22,
@@ -659,11 +686,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  // ── Signal footer ──
-  signalFooter: {
+  // ── Community signal section (inside scroll) ──
+  signalSection: {
+    marginTop: 32,
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 24,
+    paddingTop: 20,
+    paddingBottom: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
