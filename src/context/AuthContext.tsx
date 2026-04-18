@@ -29,7 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data, error }) => {
-      if (error) console.error('[AuthProvider] getSession:', error);
+      if (error && __DEV__) console.error('[AuthProvider] getSession:', error);
       setUserId(data.session?.user.id ?? null);
       setLoading(false);
     });

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Image,
   StyleSheet,
@@ -21,6 +22,7 @@ interface EventCardProps {
 
 export function EventCard({ event, onPress }: EventCardProps) {
   const { colors, resolved } = useTheme();
+  const [imageError, setImageError] = useState(false);
 
   const trustScore   = event.trust_score ?? 50;
   const trustColor   = scoreColor(trustScore, resolved);
@@ -50,12 +52,13 @@ export function EventCard({ event, onPress }: EventCardProps) {
       accessibilityHint="Opens event details"
     >
       {/* ── Hero image area ── */}
-      {event.image_url ? (
+      {event.image_url && !imageError ? (
         <Image
           source={{ uri: event.image_url }}
           style={styles.heroImage}
           resizeMode="cover"
           accessibilityLabel="Event photo"
+          onError={() => setImageError(true)}
         />
       ) : (
         <View style={[styles.heroPlaceholder, { backgroundColor: placeholderTint }]} />

@@ -15,6 +15,9 @@ import { supabase } from '../lib/supabase';
 
 type LoadingAction = 'signIn' | 'signUp' | null;
 
+const MAX_ATTEMPTS   = 3;
+const LOCKOUT_MS     = 30_000; // 30 seconds
+
 export function SignInScreen() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
@@ -22,6 +25,10 @@ export function SignInScreen() {
   const [error, setError]       = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
   const passwordRef             = useRef<TextInputRef>(null);
+
+  // Rate limiting state
+  const failedAttemptsRef = useRef(0);
+  const lockedUntilRef    = useRef<number>(0);
 
   function validate(): string | null {
     if (!email.trim())    return 'Please enter your email address.';
@@ -31,7 +38,31 @@ export function SignInScreen() {
     return null;
   }
 
+  function checkLockout(): boolean {
+    const remaining = lockedUntilRef.current - Date.now();
+    if (remaining > 0) {
+      const secs = Math.ceil(remaining / 1000);
+      setError(`Too many failed attempts. Please wait ${secs}s before trying again.`);
+      return true;
+    }
+    return false;
+  }
+
+  function recordFailure() {
+    failedAttemptsRef.current += 1;
+    if (failedAttemptsRef.current >= MAX_ATTEMPTS) {
+      lockedUntilRef.current = Date.now() + LOCKOUT_MS;
+      failedAttemptsRef.current = 0;
+    }
+  }
+
+  function recordSuccess() {
+    failedAttemptsRef.current = 0;
+    lockedUntilRef.current = 0;
+  }
+
   async function handleSignIn() {
+    if (checkLockout()) return;
     const err = validate();
     if (err) { setError(err); return; }
 
@@ -44,14 +75,17 @@ export function SignInScreen() {
     });
 
     if (authError) {
-      console.error('[SignIn]', authError);
-      setError('Invalid email or password. Please try again.');
+      recordFailure();
+      setError('Sign-in failed. Check your credentials and try again.');
+    } else {
+      recordSuccess();
     }
 
     setLoading(null);
   }
 
   async function handleSignUp() {
+    if (checkLockout()) return;
     const err = validate();
     if (err) { setError(err); return; }
 
@@ -64,9 +98,10 @@ export function SignInScreen() {
     });
 
     if (authError) {
-      console.error('[SignUp]', authError);
+      recordFailure();
       setError('Could not create account. Please try again.');
     } else {
+      recordSuccess();
       setSignedUp(true);
     }
 
@@ -94,7 +129,8 @@ export function SignInScreen() {
     );
   }
 
-  const busy = loading !== null;
+  const busy    = loading !== null;
+  const locked  = lockedUntilRef.current > Date.now();
 
   return (
     <KeyboardAvoidingView
@@ -118,7 +154,7 @@ export function SignInScreen() {
           textContentType="emailAddress"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!busy}
+          editable={!busy && !locked}
           returnKeyType="next"
           onSubmitEditing={() => passwordRef.current?.focus()}
         />
@@ -134,7 +170,7 @@ export function SignInScreen() {
           textContentType="password"
           autoCapitalize="none"
           autoCorrect={false}
-          editable={!busy}
+          editable={!busy && !locked}
           returnKeyType="done"
           onSubmitEditing={handleSignIn}
         />
@@ -142,13 +178,13 @@ export function SignInScreen() {
         {error && <Text style={styles.error}>{error}</Text>}
 
         <TouchableOpacity
-          style={[styles.button, !!busy && styles.buttonDisabled]}
+          style={[styles.button, (busy || locked) && styles.buttonDisabled]}
           onPress={handleSignIn}
-          disabled={!!busy}
+          disabled={busy || locked}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel={loading === 'signIn' ? 'Signing in' : 'Sign in'}
-          accessibilityState={{ disabled: !!busy }}
+          accessibilityState={{ disabled: busy || locked }}
         >
           {loading === 'signIn'
             ? <ActivityIndicator color="#FFFFFF" size="small" />
@@ -157,13 +193,13 @@ export function SignInScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.buttonSecondary, !!busy && styles.buttonDisabled]}
+          style={[styles.buttonSecondary, (busy || locked) && styles.buttonDisabled]}
           onPress={handleSignUp}
-          disabled={!!busy}
+          disabled={busy || locked}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel={loading === 'signUp' ? 'Creating account' : 'Sign up'}
-          accessibilityState={{ disabled: !!busy }}
+          accessibilityState={{ disabled: busy || locked }}
         >
           {loading === 'signUp'
             ? <ActivityIndicator color="#1A73E8" size="small" />

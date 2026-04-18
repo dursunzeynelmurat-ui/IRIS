@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -18,18 +17,12 @@ import { useEventDetail } from '../hooks/useEventDetail';
 import { useUserSignal } from '../hooks/useUserSignal';
 import { statusColors, scoreColor, STATUS_LABEL } from '../lib/eventUtils';
 import { formatRelativeTime, formatTimelineTimestamp } from '../lib/formatRelativeTime';
+import { safeOpenURL } from '../lib/openURL';
 import { Event, EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 type DetailTab = 'updates' | 'sources';
-
-// ── Helpers ───────────────────────────────────────────────────
-
-function openURL(url: string | null) {
-  if (!url) return;
-  try { Linking.openURL(url); } catch { /* ignore malformed URL */ }
-}
 
 // ── Live update banner ────────────────────────────────────────
 
@@ -70,16 +63,14 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
   const hasLink   = !!update.source_url;
   const linkColor = resolved === 'dark' ? '#58A6FF' : '#1A73E8';
 
-  // update_type drives dot color — restrained; only breaking and correction get distinct colors
   const dotColor = (() => {
-    if (update.update_type === 'breaking')    return colors.iris;
-    if (update.update_type === 'correction')  return resolved === 'dark' ? '#FF9F0A' : '#B25000';
+    if (update.update_type === 'breaking')   return colors.iris;
+    if (update.update_type === 'correction') return resolved === 'dark' ? '#FF9F0A' : '#B25000';
     return colors.borderStrong;
   })();
 
   return (
     <View style={styles.timelineItem}>
-      {/* Gutter */}
       <View style={styles.timelineGutter}>
         <View style={[styles.timelineDot, { backgroundColor: dotColor }]} />
         {!isLast && (
@@ -87,14 +78,12 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
         )}
       </View>
 
-      {/* Body */}
       <View style={styles.timelineBody}>
-        {/* Source + timestamp */}
         <View style={styles.timelineHeader}>
           <View style={styles.timelineSourceWrap}>
             {hasLink ? (
               <TouchableOpacity
-                onPress={() => openURL(update.source_url)}
+                onPress={() => safeOpenURL(update.source_url)}
                 activeOpacity={0.7}
                 accessibilityRole="link"
                 accessibilityLabel={`${update.source_name}, opens in browser`}
@@ -114,7 +103,6 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
           </Text>
         </View>
 
-        {/* Headline (primary) + content (body), or content alone */}
         {update.headline ? (
           <>
             <Text style={[styles.timelineHeadline, { color: colors.textPrimary }]}>
@@ -152,7 +140,7 @@ function SourceRow({ source, isLast }: { source: EventUpdate; isLast: boolean })
       <View style={styles.sourceInfo}>
         {hasLink ? (
           <TouchableOpacity
-            onPress={() => openURL(source.source_url)}
+            onPress={() => safeOpenURL(source.source_url)}
             activeOpacity={0.7}
             accessibilityRole="link"
             accessibilityLabel={`${source.source_name}, opens in browser`}
@@ -174,7 +162,7 @@ function SourceRow({ source, isLast }: { source: EventUpdate; isLast: boolean })
   );
 }
 
-// ── Community signal section (inside scroll, after updates) ───
+// ── Community signal section ──────────────────────────────────
 
 function SignalSection({ eventId, userId }: { eventId: string; userId: string }) {
   const { colors } = useTheme();
@@ -231,14 +219,17 @@ function SignalSection({ eventId, userId }: { eventId: string; userId: string })
 
 export function EventDetailScreen({ route, navigation }: Props) {
   const eventId = route.params?.eventId;
-  const { event, updates, loading, refreshing, error, refetch } = useEventDetail(eventId ?? '');
+  const { event, updates, loading, refreshing, error, updatesError, refetch } =
+    useEventDetail(eventId ?? '');
   const { userId } = useAuth();
   const { colors, resolved } = useTheme();
 
-  const [activeTab, setActiveTab] = useState<DetailTab>('updates');
+  const [activeTab, setActiveTab]   = useState<DetailTab>('updates');
   const [bannerCount, setBannerCount] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
-  const initialCountRef = useRef<number | null>(null);
+  const [heroError, setHeroError]   = useState(false);
+  const scrollRef                   = useRef<ScrollView>(null);
+  const initialCountRef             = useRef<number | null>(null);
+  const shouldScrollRef             = useRef(false);
 
   // Dynamic nav title
   useEffect(() => {
@@ -259,7 +250,14 @@ export function EventDetailScreen({ route, navigation }: Props) {
     }
   }, [updates.length, loading]);
 
-  // Unique sources — last occurrence per source gives most recent timestamp
+  // Scroll to end after tab switches to 'updates' when banner is tapped
+  useEffect(() => {
+    if (shouldScrollRef.current && activeTab === 'updates') {
+      shouldScrollRef.current = false;
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [activeTab, updates]);
+
   const uniqueSources = useMemo(() => {
     const map = new Map<string, EventUpdate>();
     for (const u of updates) { map.set(u.source_name, u); }
@@ -268,8 +266,8 @@ export function EventDetailScreen({ route, navigation }: Props) {
 
   function handleViewNewUpdate() {
     setBannerCount(0);
+    shouldScrollRef.current = true;
     setActiveTab('updates');
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }
 
   // ── Error / loading states ────────────────────────────────────
@@ -309,12 +307,12 @@ export function EventDetailScreen({ route, navigation }: Props) {
 
   // ── Derived display values ────────────────────────────────────
 
-  const trustScore   = event.trust_score ?? 50;
-  const trustColor   = scoreColor(trustScore, resolved);
-  const statusColor  = statusColors(resolved)[event.status];
-  const statusLabel  = STATUS_LABEL[event.status] ?? event.status;
-  const sourceLabel  = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
-  const heroTint     = statusColor + '22';
+  const trustScore  = event.trust_score ?? 50;
+  const trustColor  = scoreColor(trustScore, resolved);
+  const statusColor = statusColors(resolved)[event.status];
+  const statusLabel = STATUS_LABEL[event.status] ?? event.status;
+  const sourceLabel = event.source_count === 1 ? '1 source' : `${event.source_count} sources`;
+  const heroTint    = statusColor + '22';
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
@@ -324,7 +322,6 @@ export function EventDetailScreen({ route, navigation }: Props) {
         <LiveUpdateBanner count={bannerCount} onView={handleViewNewUpdate} />
       )}
 
-      {/* ── Scrollable content ────────────────────────────────── */}
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
@@ -339,12 +336,13 @@ export function EventDetailScreen({ route, navigation }: Props) {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Hero image ── */}
-        {event.image_url ? (
+        {event.image_url && !heroError ? (
           <Image
             source={{ uri: event.image_url }}
             style={styles.heroImage}
             resizeMode="cover"
             accessibilityLabel="Event photo"
+            onError={() => setHeroError(true)}
           />
         ) : (
           <View style={[styles.heroPlaceholder, { backgroundColor: heroTint }]} />
@@ -415,7 +413,13 @@ export function EventDetailScreen({ route, navigation }: Props) {
         {/* ── Tab content ── */}
         {activeTab === 'updates' ? (
           <View style={styles.tabContent}>
-            {updates.length === 0 ? (
+            {updatesError ? (
+              <View style={styles.emptyContent}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  {updatesError}
+                </Text>
+              </View>
+            ) : updates.length === 0 ? (
               <View style={styles.emptyContent}>
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No updates yet.</Text>
                 <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Pull down to refresh.</Text>
@@ -451,7 +455,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
           </View>
         )}
 
-        {/* ── Community signal — encountered after scrolling through context ── */}
+        {/* ── Community signal — after scrolling through event context ── */}
         {userId && (
           <SignalSection eventId={event.id} userId={userId} />
         )}
@@ -594,13 +598,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // ── Tab content area ──
+  // ── Tab content ──
   tabContent: {
     paddingTop: 16,
     paddingHorizontal: 20,
   },
 
-  // ── Intelligence timeline ──
+  // ── Timeline ──
   timelineItem: {
     flexDirection: 'row',
   },
@@ -686,7 +690,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  // ── Community signal section (inside scroll) ──
+  // ── Community signal ──
   signalSection: {
     marginTop: 32,
     paddingHorizontal: 20,

@@ -32,7 +32,7 @@ export function useEvents(): UseEventsResult {
       .order('created_at', { ascending: false });
 
     if (dbError) {
-      console.error('[useEvents]', dbError);
+      if (__DEV__) console.error('[useEvents]', dbError);
       setError('Unable to load events. Please try again.');
     } else {
       setEvents(data ?? []);

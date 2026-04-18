@@ -45,7 +45,7 @@ export function useVerifiedEvents(): VerifiedEventsResult {
       .order('created_at', { ascending: false });
 
     if (dbError) {
-      console.error('[useVerifiedEvents]', dbError);
+      if (__DEV__) console.error('[useVerifiedEvents]', dbError);
       setError('Unable to load verified events.');
     } else {
       setEvents((data as Event[]) ?? []);

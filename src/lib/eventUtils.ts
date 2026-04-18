@@ -44,10 +44,6 @@ export function statusColors(
   return resolved === 'light' ? STATUS_COLOR_LIGHT : STATUS_COLOR_DARK;
 }
 
-// Backward-compatible alias — consumed by any code that hasn't migrated yet.
-// Always returns dark values (the original set).
-export const STATUS_COLOR = STATUS_COLOR_DARK;
-
 // ── Score color ───────────────────────────────────────────────
 
 /**
