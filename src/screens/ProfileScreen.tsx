@@ -24,11 +24,6 @@ function emailInitial(email: string | null): string {
   return email.charAt(0).toUpperCase();
 }
 
-function shortId(id: string | null): string {
-  if (!id) return '—';
-  return id.length > 8 ? `···${id.slice(-8)}` : id;
-}
-
 function formatMemberSince(isoDate: string | null | undefined): string {
   if (!isoDate) return '';
   try {
@@ -75,7 +70,6 @@ export function ProfileScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const [email, setEmail]       = useState<string | null>(null);
-  const [userId, setUserId]     = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string>('');
   const [signingOut, setSigningOut] = useState(false);
 
@@ -83,7 +77,6 @@ export function ProfileScreen({ navigation }: Props) {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
       setEmail(user?.email ?? null);
-      setUserId(user?.id ?? null);
       setMemberSince(formatMemberSince(user?.created_at));
     });
   }, []);
@@ -137,9 +130,6 @@ export function ProfileScreen({ navigation }: Props) {
               numberOfLines={1}
             >
               {email ?? '—'}
-            </Text>
-            <Text style={[styles.userIdText, { color: colors.textTertiary }]}>
-              {shortId(userId)}
             </Text>
             {!!memberSince && (
               <Text style={[styles.memberSince, { color: colors.textTertiary }]}>
@@ -252,10 +242,6 @@ const styles = StyleSheet.create({
   emailText: {
     fontSize: 15,
     fontWeight: '600',
-  },
-  userIdText: {
-    fontSize: 12,
-    letterSpacing: 0.4,
   },
   memberSince: {
     fontSize: 11,

@@ -11,6 +11,7 @@ import {
   type TextInput as TextInputRef,
   View,
 } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
 
 type LoadingAction = 'signIn' | 'signUp' | null;
@@ -19,6 +20,7 @@ const MAX_ATTEMPTS   = 3;
 const LOCKOUT_MS     = 30_000; // 30 seconds
 
 export function SignInScreen() {
+  const { colors } = useTheme();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading]   = useState<LoadingAction>(null);
@@ -110,9 +112,9 @@ export function SignInScreen() {
 
   if (signedUp) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.title}>Check your email</Text>
-        <Text style={styles.subtitle}>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>Check your email</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           A confirmation link was sent to {email.trim()}.{'\n'}
           Confirm your account, then sign in.
         </Text>
@@ -123,33 +125,37 @@ export function SignInScreen() {
           accessibilityRole="button"
           accessibilityLabel="Back to sign in"
         >
-          <Text style={styles.linkText}>Back to Sign In</Text>
+          <Text style={[styles.linkText, { color: colors.iris }]}>Back to Sign In</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  const busy    = loading !== null;
-  const locked  = lockedUntilRef.current > Date.now();
+  const busy   = loading !== null;
+  const locked = lockedUntilRef.current > Date.now();
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
         contentContainerStyle={styles.form}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.wordmark}>IRIS</Text>
-        <Text style={styles.tagline}>Real-time event intelligence</Text>
+        <Text style={[styles.wordmark, { color: colors.iris }]}>IRIS</Text>
+        <Text style={[styles.tagline, { color: colors.textTertiary }]}>Real-time event intelligence</Text>
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, {
+            borderColor: colors.border,
+            backgroundColor: colors.bgInput,
+            color: colors.textPrimary,
+          }]}
           value={email}
           onChangeText={(v) => { setEmail(v); setError(null); }}
           placeholder="Email address"
-          placeholderTextColor="#9AA0A6"
+          placeholderTextColor={colors.textTertiary}
           keyboardType="email-address"
           textContentType="emailAddress"
           autoCapitalize="none"
@@ -161,11 +167,15 @@ export function SignInScreen() {
 
         <TextInput
           ref={passwordRef}
-          style={styles.input}
+          style={[styles.input, {
+            borderColor: colors.border,
+            backgroundColor: colors.bgInput,
+            color: colors.textPrimary,
+          }]}
           value={password}
           onChangeText={(v) => { setPassword(v); setError(null); }}
           placeholder="Password"
-          placeholderTextColor="#9AA0A6"
+          placeholderTextColor={colors.textTertiary}
           secureTextEntry={true}
           textContentType="password"
           autoCapitalize="none"
@@ -175,10 +185,16 @@ export function SignInScreen() {
           onSubmitEditing={handleSignIn}
         />
 
-        {error && <Text style={styles.error}>{error}</Text>}
+        {error && (
+          <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
+        )}
 
         <TouchableOpacity
-          style={[styles.button, (busy || locked) && styles.buttonDisabled]}
+          style={[
+            styles.button,
+            { backgroundColor: colors.iris },
+            (busy || locked) && styles.buttonDisabled,
+          ]}
           onPress={handleSignIn}
           disabled={busy || locked}
           activeOpacity={0.8}
@@ -188,12 +204,16 @@ export function SignInScreen() {
         >
           {loading === 'signIn'
             ? <ActivityIndicator color="#FFFFFF" size="small" />
-            : <Text style={styles.buttonText}>Sign In</Text>
+            : <Text style={[styles.buttonText, { color: '#FFFFFF' }]}>Sign In</Text>
           }
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.buttonSecondary, (busy || locked) && styles.buttonDisabled]}
+          style={[
+            styles.buttonSecondary,
+            { borderColor: colors.iris },
+            (busy || locked) && styles.buttonDisabled,
+          ]}
           onPress={handleSignUp}
           disabled={busy || locked}
           activeOpacity={0.8}
@@ -202,8 +222,8 @@ export function SignInScreen() {
           accessibilityState={{ disabled: busy || locked }}
         >
           {loading === 'signUp'
-            ? <ActivityIndicator color="#1A73E8" size="small" />
-            : <Text style={styles.buttonSecondaryText}>Sign Up</Text>
+            ? <ActivityIndicator color={colors.iris} size="small" />
+            : <Text style={[styles.buttonSecondaryText, { color: colors.iris }]}>Sign Up</Text>
           }
         </TouchableOpacity>
       </ScrollView>
@@ -214,7 +234,6 @@ export function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   form: {
     flexGrow: 1,
@@ -226,51 +245,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    backgroundColor: '#FFFFFF',
   },
   wordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#1A73E8',
     letterSpacing: 6,
     marginBottom: 6,
   },
   tagline: {
     fontSize: 13,
-    color: '#9AA0A6',
     letterSpacing: 0.3,
     marginBottom: 36,
   },
   title: {
     fontSize: 26,
     fontWeight: '700',
-    color: '#1A1A2E',
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 15,
-    color: '#5F6368',
     marginBottom: 28,
     lineHeight: 22,
+    textAlign: 'center',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E8EAED',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 13,
     fontSize: 15,
     marginBottom: 12,
-    backgroundColor: '#F2F4F7',
-    color: '#1A1A2E',
   },
   error: {
     fontSize: 13,
-    color: '#C5221F',
     marginBottom: 12,
   },
   button: {
-    backgroundColor: '#1A73E8',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -278,7 +288,6 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: {
     borderWidth: 1,
-    borderColor: '#1A73E8',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -287,12 +296,10 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   buttonText: {
-    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
   },
   buttonSecondaryText: {
-    color: '#1A73E8',
     fontSize: 15,
     fontWeight: '600',
   },
@@ -302,7 +309,6 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#1A73E8',
     textDecorationLine: 'underline',
   },
 });

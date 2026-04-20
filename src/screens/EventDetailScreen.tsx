@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SignalButton } from '../components/SignalButton';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
@@ -223,6 +224,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
     useEventDetail(eventId ?? '');
   const { userId } = useAuth();
   const { colors, resolved } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab]   = useState<DetailTab>('updates');
   const [bannerCount, setBannerCount] = useState(0);
@@ -325,7 +327,7 @@ export function EventDetailScreen({ route, navigation }: Props) {
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 24) + 32 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -473,9 +475,7 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
   },
-  scrollContent: {
-    paddingBottom: 48,
-  },
+  scrollContent: {},
   centered: {
     flex: 1,
     alignItems: 'center',

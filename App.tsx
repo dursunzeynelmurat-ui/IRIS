@@ -53,10 +53,10 @@ function AppContent() {
   if (loading) {
     return (
       <>
-        <StatusBar style="dark" />
-        <View style={styles.splash}>
-          <Text style={styles.splashWordmark}>IRIS</Text>
-          <ActivityIndicator size="small" color="#9AA0A6" style={styles.splashSpinner} />
+        <StatusBar style={statusStyle} />
+        <View style={[styles.splash, { backgroundColor: colors.bg }]}>
+          <Text style={[styles.splashWordmark, { color: colors.iris }]}>IRIS</Text>
+          <ActivityIndicator size="small" color={colors.textTertiary} style={styles.splashSpinner} />
         </View>
       </>
     );
@@ -65,7 +65,7 @@ function AppContent() {
   if (!userId) {
     return (
       <>
-        <StatusBar style="dark" />
+        <StatusBar style={statusStyle} />
         <SignInScreen />
       </>
     );
@@ -165,12 +165,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
   },
   splashWordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#1A73E8',
     letterSpacing: 8,
   },
   splashSpinner: {
