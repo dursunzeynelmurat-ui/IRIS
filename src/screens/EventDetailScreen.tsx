@@ -18,7 +18,7 @@ import { useUserSignal } from '../hooks/useUserSignal';
 import { statusColors, scoreColor, STATUS_LABEL } from '../lib/eventUtils';
 import { formatRelativeTime, formatTimelineTimestamp } from '../lib/formatRelativeTime';
 import { safeOpenURL } from '../lib/openURL';
-import { Event, EventUpdate } from '../types';
+import { EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
