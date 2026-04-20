@@ -211,6 +211,14 @@ export interface UserPreferences {
 export type ReliabilityTier = 'low' | 'medium' | 'high' | 'official';
 export type FeedSourceType = 'media_rss' | 'official_rss' | 'official_page';
 
+/**
+ * Determines when a feed is eligible for production polling (migration 036).
+ *   active_allowed    — open feed, safe for production.
+ *   dev_only          — dev/test only; excluded in production.
+ *   licensed_required — must be manually enabled after license confirmed.
+ */
+export type SourcePolicy = 'active_allowed' | 'dev_only' | 'licensed_required';
+
 /** Row from public.source_feeds. */
 export interface SourceFeed {
   id: string;
@@ -222,6 +230,7 @@ export interface SourceFeed {
   credibility_score: number;      // 0–100
   poll_interval_seconds: number;
   parser_type: 'rss2' | 'atom' | 'json_feed' | 'html_page';
+  source_policy: SourcePolicy;
   is_active: boolean;
   health_score: number;           // 0–100
   last_fetched_at: string | null;

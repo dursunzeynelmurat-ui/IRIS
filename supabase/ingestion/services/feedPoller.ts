@@ -24,6 +24,8 @@ export interface SourceFeed {
   poll_interval_seconds: number;
   is_active: boolean;
   health_score: number;
+  /** Controls when this feed is eligible for production polling (migration 036). */
+  source_policy: 'active_allowed' | 'dev_only' | 'licensed_required';
   last_fetched_at: string | null;
   last_success_at: string | null;
   last_error_at: string | null;
@@ -56,22 +58,33 @@ export interface RawItemInsert {
 // ── Feed queries ─────────────────────────────────────────────────────────────
 
 /**
- * Return active feeds that are due to be polled.
+ * Return active feeds that are due to be polled, respecting source_policy.
  *
- * A feed is due when:
- *   - last_fetched_at IS NULL (never fetched), OR
- *   - last_fetched_at < NOW() - poll_interval_seconds
+ * Policy enforcement (migration 036):
+ *   active_allowed    — always eligible if is_active=true
+ *   dev_only          — only eligible when NODE_ENV !== 'production'
+ *   licensed_required — never eligible via this path (DB also sets is_active=false,
+ *                       but we enforce in code as a defence-in-depth measure)
  *
+ * A feed is due when last_fetched_at is NULL or older than poll_interval_seconds.
  * Feeds with health_score < 30 are skipped (too many recent failures).
  */
 export async function getActiveFeeds(client: SupabaseClient): Promise<SourceFeed[]> {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Build the allowed policy list for this environment.
+  const allowedPolicies = isProduction
+    ? ['active_allowed']
+    : ['active_allowed', 'dev_only'];
+
   // Supabase does not support interval arithmetic in the JS client, so we
-  // fetch all active healthy feeds and filter due ones in JavaScript.
+  // fetch all candidate feeds and filter due ones in JavaScript.
   const { data, error } = await client
     .from('source_feeds')
     .select('*')
     .eq('is_active', true)
     .gte('health_score', 30)
+    .in('source_policy', allowedPolicies)
     .order('last_fetched_at', { ascending: true, nullsFirst: true });
 
   if (error) {
@@ -80,6 +93,8 @@ export async function getActiveFeeds(client: SupabaseClient): Promise<SourceFeed
 
   const now = Date.now();
   return (data as SourceFeed[]).filter((feed) => {
+    // Defence-in-depth: never poll licensed_required regardless of DB state.
+    if (feed.source_policy === 'licensed_required') return false;
     if (!feed.last_fetched_at) return true;
     const lastFetched = new Date(feed.last_fetched_at).getTime();
     const intervalMs = feed.poll_interval_seconds * 1000;
