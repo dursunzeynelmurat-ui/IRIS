@@ -12,8 +12,8 @@ interface UseRisingEventsResult {
 /**
  * Fetches the Rising feed via the get_rising_events RPC.
  *
- * Ranking (server-side): (follow_count * 10) + status_bonus + (trust_score / 10)
- * Only emerging + developing events are included.
+ * Ranking (server-side): feed_rank composite (trust, importance, recency, engagement).
+ * Only 'new' + 'developing' events are included.
  */
 export function useRisingEvents(limit = 20): UseRisingEventsResult {
   const [events, setEvents] = useState<Event[]>([]);

@@ -24,7 +24,7 @@ import type { SourceAdapter, RawSourceItem } from '../types';
 const SAMPLE_ITEMS: RawSourceItem[] = [
   {
     headline: 'Flooding reported in northern districts',
-    status: 'emerging',
+    status: 'new',
     content: 'Heavy rainfall causing road closures in 3 districts.',
     source_name: 'Reuters',
     additional_updates: [
@@ -86,7 +86,7 @@ const SAMPLE_ITEMS: RawSourceItem[] = [
   },
   {
     headline: 'Hospital cyberattack — systems partially offline',
-    status: 'emerging',
+    status: 'new',
     content: 'Regional hospital reports IT systems compromised.',
     source_name: 'Anonymous Source',
     additional_updates: [
@@ -124,7 +124,7 @@ const SAMPLE_ITEMS: RawSourceItem[] = [
   },
   {
     headline: 'Gas explosion — residential building',
-    status: 'disputed',
+    status: 'conflicted',
     content: 'Explosion reported on 4th floor, cause unknown.',
     source_name: 'Emergency Services',
     additional_updates: [
@@ -143,7 +143,7 @@ const SAMPLE_ITEMS: RawSourceItem[] = [
   },
   {
     headline: 'Drone swarm sighted near airport — airspace restricted',
-    status: 'emerging',
+    status: 'new',
     content: 'Multiple unauthorized drones detected within 5km of runway.',
     source_name: 'Air Traffic Control',
     additional_updates: [

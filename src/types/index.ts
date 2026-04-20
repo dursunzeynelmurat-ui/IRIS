@@ -3,11 +3,7 @@
 // Mirrors the database schema exactly.
 // ============================================================
 
-/** Phase 1 status values retained for compatibility with legacy data. */
-type EventStatusLegacy = 'emerging' | 'disputed';
-
-/** Phase 2 status vocabulary — aligned with event lifecycle. */
-type EventStatusPhase2 =
+export type EventStatus =
   | 'new'         // First sighting; minimal confirmation
   | 'developing'  // Actively evolving with new information
   | 'verified'    // Confirmed by multiple reliable sources
@@ -15,8 +11,6 @@ type EventStatusPhase2 =
   | 'contained'   // Situation controlled; no longer spreading
   | 'resolved'    // Confirmed closure/resolution
   | 'archived';   // Removed from all feeds (stale or low-value)
-
-export type EventStatus = EventStatusPhase2 | EventStatusLegacy;
 
 export type SignalType = 'confirm' | 'dispute';
 

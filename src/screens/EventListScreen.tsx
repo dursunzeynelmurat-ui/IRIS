@@ -25,10 +25,10 @@ type FilterOption = 'all' | EventStatus;
 
 const FILTERS: { key: FilterOption; label: string }[] = [
   { key: 'all',        label: 'All' },
-  { key: 'emerging',   label: 'Emerging' },
+  { key: 'new',        label: 'New' },
   { key: 'developing', label: 'Developing' },
   { key: 'verified',   label: 'Verified' },
-  { key: 'disputed',   label: 'Disputed' },
+  { key: 'conflicted', label: 'Conflicted' },
 ];
 
 export function EventListScreen({ navigation }: Props) {

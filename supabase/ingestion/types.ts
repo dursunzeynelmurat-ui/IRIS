@@ -25,7 +25,7 @@ import type { EventStatus, UpdateType } from '../../src/types';
 //   - Provide headline, primary coverage (content + source_name), and status
 //   - Optionally bundle coverage from additional sources
 //   - Assign a status that reflects the event's confidence level;
-//     'emerging' is the safe default when uncertain
+//     'new' is the safe default when uncertain
 //
 // Adapters are NOT responsible for:
 //   - Deduplication (ingest_event: advisory lock + 10-min window, migration 014)
@@ -47,7 +47,7 @@ export interface RawSourceUpdate {
 export interface RawSourceItem {
   /** Main event title. Stored with trimmed original case. Dedup is case-insensitive. */
   headline: string;
-  /** Event confidence level. 'emerging' is the safe default when uncertain. */
+  /** Event confidence level. 'new' is the safe default when uncertain. */
   status: EventStatus;
   /** Primary source content / summary. Becomes updates[0] after normalization. */
   content: string;
