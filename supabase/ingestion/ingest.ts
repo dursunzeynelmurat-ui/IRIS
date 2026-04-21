@@ -28,13 +28,18 @@ export async function ingestEvent(
   const { title, status, updates } = payload;
 
   const { data: eventId, error } = await client.rpc('ingest_event', {
-    p_title: title,
-    p_status: status,
-    p_updates: updates.map((u) => ({
-      content: u.content,
+    p_title:     title,
+    p_status:    status,
+    p_updates:   updates.map((u) => ({
+      content:     u.content,
       source_name: u.source_name,
-      source_url: u.source_url ?? null,
+      source_url:  u.source_url  ?? null,
+      source_id:   u.source_id   ?? null,
+      update_type: u.update_type ?? null,
+      headline:    u.headline    ?? null,
     })),
+    p_image_url: payload.image_url ?? null,
+    p_summary:   payload.summary   ?? null,
   });
 
   if (error) {

@@ -93,7 +93,7 @@ async function ingestEvent(payload: EventPayload): Promise<void> {
 const SEED_EVENTS: EventPayload[] = [
   {
     title: 'Flooding reported in northern districts',
-    status: 'emerging',
+    status: 'new',
     updates: [
       { content: 'Heavy rainfall causing road closures in 3 districts.', source_name: 'Reuters' },
       { content: 'Local emergency services deployed to affected areas.', source_name: 'BBC', source_url: 'https://bbc.com' },
@@ -144,7 +144,7 @@ const SEED_EVENTS: EventPayload[] = [
   },
   {
     title: 'Hospital cyberattack — systems partially offline',
-    status: 'emerging',
+    status: 'new',
     updates: [
       { content: 'Regional hospital reports IT systems compromised.', source_name: 'Anonymous Source' },
       { content: 'Patient records system restored; surgery schedule delayed.', source_name: 'Hospital PR' },
@@ -178,7 +178,7 @@ const SEED_EVENTS: EventPayload[] = [
   },
   {
     title: 'Gas explosion — residential building',
-    status: 'disputed',
+    status: 'conflicted',
     updates: [
       { content: 'Explosion reported on 4th floor, cause unknown.', source_name: 'Emergency Services' },
       { content: 'Gas company denies pipeline fault; investigation ongoing.', source_name: 'Gas Company PR' },
@@ -195,7 +195,7 @@ const SEED_EVENTS: EventPayload[] = [
   },
   {
     title: 'Drone swarm sighted near airport — airspace restricted',
-    status: 'emerging',
+    status: 'new',
     updates: [
       { content: 'Multiple unauthorized drones detected within 5km of runway.', source_name: 'Air Traffic Control' },
       { content: 'Police and counter-drone units deployed; origin unknown.', source_name: 'Police Statement' },

@@ -1,7 +1,7 @@
 -- verify_db.sql
 --
 -- Read-only verification script for the IRIS database schema.
--- Run after applying all migrations (001–022) to confirm expected state.
+-- Run after applying all migrations (001–027) to confirm expected state.
 -- All queries are SELECT-only — safe to run against production.
 --
 -- Usage: Paste into Supabase SQL Editor (or psql) and run.
@@ -16,7 +16,10 @@ SELECT
 FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relkind = 'r'
-  AND relname IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
+  AND relname IN (
+    'events', 'event_updates', 'signals', 'users',
+    'user_preferences', 'event_follows', 'sources'
+  )
 ORDER BY relname;
 
 -- ── Section 2: All policies on core tables (informational) ────────────────
@@ -31,12 +34,15 @@ SELECT
   with_check
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('events', 'event_updates', 'signals', 'users', 'user_preferences', 'event_follows')
+  AND tablename IN (
+    'events', 'event_updates', 'signals', 'users',
+    'user_preferences', 'event_follows', 'sources'
+  )
 ORDER BY tablename, policyname;
 
--- ── Section 3: RESTRICTIVE deny policies — all 16 required ──────────────
+-- ── Section 3: RESTRICTIVE deny policies — all 19 required ──────────────
 --
--- After migrations 004, 005, 007, 010, 018, 019 the following RESTRICTIVE
+-- After migrations 004, 005, 007, 010, 018, 019, 023 the following RESTRICTIVE
 -- policies must exist. Any missing row = FAIL.
 
 WITH expected_restrictive AS (
@@ -62,7 +68,11 @@ WITH expected_restrictive AS (
     ('user_preferences',  'deny_prefs_delete'),
     -- migration 019
     ('event_follows',     'deny_follows_anon'),
-    ('event_follows',     'deny_follows_update')
+    ('event_follows',     'deny_follows_update'),
+    -- migration 023
+    ('sources',           'deny_sources_insert'),
+    ('sources',           'deny_sources_update'),
+    ('sources',           'deny_sources_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -103,11 +113,15 @@ WHERE n.nspname = 'public'
     'validate_signal_immutable_fields',
     'handle_new_user',
     'ingest_event',
-    'reconcile_source_counts',   -- migration 015
-    'reconcile_trust_scores',    -- migration 015
-    'compute_trust_score',       -- migration 016
-    'sync_follow_count',         -- migration 019
-    'toggle_event_follow'        -- migration 019 (SECURITY DEFINER, user-callable RPC)
+    'reconcile_source_counts',      -- migration 015
+    'reconcile_trust_scores',       -- migration 015 / 024 shim
+    'compute_trust_score',          -- migration 024 (composite formula)
+    'sync_follow_count',            -- migration 019
+    'toggle_event_follow',          -- migration 019 (user-callable RPC)
+    'compute_crowd_score',          -- migration 024
+    'compute_source_score',         -- migration 024
+    'recalculate_event_scores',     -- migration 024
+    'reconcile_event_scores'        -- migration 024
   )
 ORDER BY p.proname;
 
@@ -136,7 +150,8 @@ WHERE n.nspname = 'public'
     'signals_sync_trust_score',           -- AFTER INSERT OR UPDATE OR DELETE on signals (migrations 006, 013)
     'trg_sync_source_count',              -- AFTER INSERT OR DELETE on event_updates (migration 003)
     'signals_enforce_immutable_fields',   -- BEFORE UPDATE on signals (migration 009)
-    'trg_sync_follow_count'               -- AFTER INSERT OR DELETE on event_follows (migration 019)
+    'trg_sync_follow_count',              -- AFTER INSERT OR DELETE on event_follows (migration 019)
+    'sync_latest_update_at'              -- AFTER INSERT OR DELETE on event_updates (migration 025)
   )
 ORDER BY c.relname, t.tgname;
 
@@ -170,11 +185,15 @@ WHERE n.nspname = 'auth'
 -- implementation detail, not a public API endpoint.
 
 WITH checks AS (
-  SELECT 'recalculate_trust_score(uuid)'   AS fn UNION ALL
-  SELECT 'ingest_event(text,text,jsonb)'   UNION ALL
-  SELECT 'reconcile_source_counts()'       UNION ALL
-  SELECT 'reconcile_trust_scores()'        UNION ALL
-  SELECT 'compute_trust_score(integer,integer)'  -- migration 016
+  SELECT 'recalculate_trust_score(uuid)'              AS fn UNION ALL
+  SELECT 'ingest_event(text,text,jsonb,text,text)'        UNION ALL
+  SELECT 'reconcile_source_counts()'                  UNION ALL
+  SELECT 'reconcile_trust_scores()'                   UNION ALL
+  SELECT 'compute_trust_score(integer,integer)'       UNION ALL  -- migration 024 (composite)
+  SELECT 'compute_crowd_score(integer,integer)'       UNION ALL  -- migration 024
+  SELECT 'compute_source_score(uuid)'                 UNION ALL  -- migration 024
+  SELECT 'recalculate_event_scores(uuid)'             UNION ALL  -- migration 024
+  SELECT 'reconcile_event_scores()'                              -- migration 024
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -260,7 +279,11 @@ WITH deny_policies AS (
     ('user_preferences',  'deny_prefs_anon'),
     ('user_preferences',  'deny_prefs_delete'),
     ('event_follows',     'deny_follows_anon'),
-    ('event_follows',     'deny_follows_update')
+    ('event_follows',     'deny_follows_update'),
+    -- migration 023
+    ('sources',           'deny_sources_insert'),
+    ('sources',           'deny_sources_update'),
+    ('sources',           'deny_sources_delete')
   ) AS t(tbl, pol)
 )
 SELECT
@@ -302,7 +325,12 @@ WITH expected_checks AS (
     ('signals',          'signals_type_check',              'signals.type IN (confirm, dispute)'),
     ('events',           'events_status_check',             'events.status IN (emerging, developing, verified, disputed)'),
     ('events',           'events_trust_score_check',        'events.trust_score BETWEEN 0 AND 100'),
-    ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)')
+    ('events',           'events_source_score_check',       'events.source_score BETWEEN 0 AND 100'),
+    ('events',           'events_crowd_score_check',        'events.crowd_score BETWEEN 0 AND 100'),
+    ('user_preferences', 'user_preferences_theme_check',    'user_preferences.theme IN (system, light, dark)'),
+    ('sources',          'sources_credibility_check',       'sources.credibility BETWEEN 0 AND 100'),
+    ('sources',          'sources_source_type_check',       'sources.source_type IN (media, official, expert, community)'),
+    ('event_updates',    'chk_event_updates_update_type',   'event_updates.update_type IN (report, witness, official, confirmed, under_verification, analysis, correction)')
   ) AS t(tbl, expected_name, description)
 )
 SELECT
@@ -310,11 +338,9 @@ SELECT
   e.description AS "expected_constraint",
   CASE
     WHEN c.conname IS NOT NULL THEN 'PASS — ' || c.conname
-    -- Fall back: look for any CHECK constraint on the table that covers the column
     ELSE 'FAIL ← no matching CHECK constraint found (run Section 2 to inspect)'
   END AS status
 FROM expected_checks e
--- Try to find a CHECK constraint whose definition contains the key column name
 LEFT JOIN pg_constraint c
   ON c.conrelid = ('public.' || e.tbl)::regclass
   AND c.contype = 'c'
@@ -328,8 +354,23 @@ LEFT JOIN pg_constraint c
     -- events.trust_score check
     (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%trust_score%')
     OR
+    -- events.source_score check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%source_score%')
+    OR
+    -- events.crowd_score check
+    (e.tbl = 'events' AND pg_get_constraintdef(c.oid) LIKE '%crowd_score%')
+    OR
     -- user_preferences.theme check
     (e.tbl = 'user_preferences' AND pg_get_constraintdef(c.oid) LIKE '%system%' AND pg_get_constraintdef(c.oid) LIKE '%light%')
+    OR
+    -- sources.credibility check
+    (e.tbl = 'sources' AND pg_get_constraintdef(c.oid) LIKE '%credibility%')
+    OR
+    -- sources.source_type check
+    (e.tbl = 'sources' AND pg_get_constraintdef(c.oid) LIKE '%media%' AND pg_get_constraintdef(c.oid) LIKE '%official%')
+    OR
+    -- event_updates.update_type check
+    (e.tbl = 'event_updates' AND pg_get_constraintdef(c.oid) LIKE '%report%' AND pg_get_constraintdef(c.oid) LIKE '%witness%')
   )
 ORDER BY e.tbl, e.description;
 
@@ -354,6 +395,8 @@ WITH expected_triggers AS (
      'AFTER INSERT OR UPDATE OR DELETE — must cover DELETE for user account cascade'),
     ('event_updates', 'trg_sync_source_count',            13,
      'AFTER INSERT OR DELETE'),
+    ('event_updates', 'sync_latest_update_at',            13,
+     'AFTER INSERT OR DELETE — keeps events.latest_update_at in sync'),
     ('event_follows', 'trg_sync_follow_count',            13,
      'AFTER INSERT OR DELETE — keeps follow_count denormalized counter in sync')
   ) AS t(tbl, trig, expected_tgtype, description)
@@ -772,10 +815,12 @@ ORDER BY policyname;
 --   public read functions — both anon and authenticated must be able to call them.
 
 WITH rpc_checks AS (
-  SELECT 'toggle_event_follow(uuid)'     AS fn, false AS anon_allowed UNION ALL
-  SELECT 'get_rising_events(integer)'    AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_events(text,integer)'   AS fn, true  AS anon_allowed UNION ALL
-  SELECT 'search_event_updates(text)'    AS fn, true  AS anon_allowed
+  SELECT 'toggle_event_follow(uuid)'             AS fn, false AS anon_allowed UNION ALL
+  SELECT 'get_rising_events(integer)'            AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_events(text,integer)'           AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'search_event_updates(text)'            AS fn, true  AS anon_allowed UNION ALL
+  SELECT 'get_event_sources(uuid)'               AS fn, true  AS anon_allowed UNION ALL  -- migration 023
+  SELECT 'get_feed_events(text,integer,integer)' AS fn, true  AS anon_allowed            -- migration 027
 ),
 roles AS (
   SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')
@@ -836,6 +881,656 @@ LEFT JOIN (
   LIMIT 1
 ) p ON p.proname = x.expected_fn;
 
+-- ── Section 21: Sources table (migration 023) ────────────────────────────
+--
+-- Comprehensive verification of the sources table.
+-- RLS enablement   → Section 1
+-- RESTRICTIVE deny → Sections 3 + 11 (deny_sources_insert/update/delete)
+-- CHECK constraints → Section 12 (credibility, source_type)
+-- This section covers: table + column existence, permissive read policy,
+-- unique name index, absence of unexpected permissive write policies.
+
+-- ── Part A: Table and column existence ───────────────────────────────────
+
+SELECT
+  cl.relname AS table_name,
+  CASE WHEN cl.oid IS NOT NULL THEN 'PASS — table exists'
+       ELSE 'FAIL ← sources table missing (apply migration 023)' END AS table_status,
+  (
+    SELECT COUNT(*) FROM pg_attribute a
+    WHERE a.attrelid = cl.oid
+      AND a.attname IN ('id', 'name', 'domain', 'credibility', 'source_type', 'verified', 'created_at')
+      AND NOT a.attisdropped
+  ) AS expected_columns_found,
+  CASE
+    WHEN cl.oid IS NULL
+      THEN 'FAIL ← table missing (apply migration 023)'
+    WHEN (
+      SELECT COUNT(*) FROM pg_attribute a
+      WHERE a.attrelid = cl.oid
+        AND a.attname IN ('id', 'name', 'domain', 'credibility', 'source_type', 'verified', 'created_at')
+        AND NOT a.attisdropped
+    ) < 7
+      THEN 'FAIL ← one or more expected columns missing'
+    ELSE 'PASS — all 7 expected columns present'
+  END AS column_status
+FROM pg_namespace n
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = n.oid AND cl.relname = 'sources' AND cl.relkind = 'r'
+WHERE n.nspname = 'public';
+
+-- ── Part B: source_id column on event_updates ────────────────────────────
+
+SELECT
+  a.attname AS column_name,
+  CASE
+    WHEN a.attnum IS NULL
+      THEN 'FAIL ← source_id column missing from event_updates (apply migration 023)'
+    ELSE 'PASS'
+  END AS status
+FROM pg_class cl
+JOIN pg_namespace n ON n.oid = cl.relnamespace
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = 'source_id' AND NOT a.attisdropped
+WHERE n.nspname = 'public' AND cl.relname = 'event_updates';
+
+-- ── Part C: Unique name index ─────────────────────────────────────────────
+--
+-- idx_sources_name_lower prevents duplicate source records with the same name.
+
+SELECT
+  'idx_sources_name_lower' AS index_name,
+  CASE
+    WHEN pi.indexname IS NOT NULL THEN 'PASS — unique name index exists'
+    ELSE 'FAIL ← idx_sources_name_lower missing (apply migration 023)'
+  END AS status
+FROM (SELECT 'idx_sources_name_lower'::text AS expected_idx) x
+LEFT JOIN pg_indexes pi
+  ON pi.schemaname = 'public' AND pi.indexname = x.expected_idx;
+
+-- ── Part D: sources_read_all permissive policy ────────────────────────────
+
+SELECT
+  policyname AS "policy",
+  cmd,
+  CASE
+    WHEN policyname = 'sources_read_all' AND cmd = 'SELECT'
+      THEN 'PASS — expected public read policy'
+    ELSE 'FAIL ← unexpected policy or missing sources_read_all: ' || policyname
+  END AS status
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'sources'
+  AND permissive = 'PERMISSIVE'
+ORDER BY policyname;
+
+
+-- ── Section 22: Three-score trust model (migrations 023 + 024) ───────────
+--
+-- Verifies that events carries the three score columns, that the scoring
+-- functions exist with correct security settings, and that the composite
+-- formula produces expected outputs for known inputs.
+
+-- ── Part A: score columns on events ──────────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from events (apply migrations 023/024)'
+  END AS status
+FROM (VALUES ('source_score'), ('crowd_score')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'events'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: score function existence and security ─────────────────────────
+--
+-- compute_crowd_score, compute_source_score, compute_trust_score:
+--   must all be SECURITY DEFINER + SET search_path=public (internal helpers).
+-- recalculate_event_scores, reconcile_event_scores: same requirements.
+
+SELECT
+  expected.fn_name AS "function",
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← function missing (apply migration 024)'
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM (VALUES
+  ('compute_crowd_score'),
+  ('compute_source_score'),
+  ('compute_trust_score'),
+  ('recalculate_event_scores'),
+  ('reconcile_event_scores')
+) AS expected(fn_name)
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef, p.proconfig
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+) p ON p.proname = expected.fn_name
+ORDER BY expected.fn_name;
+
+-- ── Part C: compute_trust_score formula verification ─────────────────────
+--
+-- Verifies the composite formula: clamp(source + (crowd - 50) * 0.2, 0, 100)
+-- Tests known input/output pairs.
+
+SELECT
+  inputs.label,
+  inputs.p_source,
+  inputs.p_crowd,
+  inputs.expected,
+  public.compute_trust_score(inputs.p_source, inputs.p_crowd) AS actual,
+  CASE
+    WHEN public.compute_trust_score(inputs.p_source, inputs.p_crowd) = inputs.expected
+      THEN 'PASS'
+    ELSE 'FAIL ← got ' || public.compute_trust_score(inputs.p_source, inputs.p_crowd)
+         || ', expected ' || inputs.expected
+  END AS status
+FROM (VALUES
+  ('neutral baseline',       50,  50, 50),
+  ('max crowd boost',        50, 100, 60),
+  ('max crowd penalty',      50,   0, 40),
+  ('high source + boost',    80, 100, 90),
+  ('high source + penalty',  80,   0, 70),
+  ('low source + boost',     20, 100, 30),
+  ('clamp at 100',           95, 100, 100),
+  ('clamp at 0',              5,   0,  0),
+  ('partial crowd effect',   60,  75, 65)
+) AS inputs(label, p_source, p_crowd, expected)
+ORDER BY inputs.label;
+
+-- ── Part D: compute_crowd_score formula verification ─────────────────────
+
+SELECT
+  inputs.label,
+  inputs.confirms,
+  inputs.disputes,
+  inputs.expected,
+  public.compute_crowd_score(inputs.confirms, inputs.disputes) AS actual,
+  CASE
+    WHEN public.compute_crowd_score(inputs.confirms, inputs.disputes) = inputs.expected
+      THEN 'PASS'
+    ELSE 'FAIL ← got ' || public.compute_crowd_score(inputs.confirms, inputs.disputes)
+         || ', expected ' || inputs.expected
+  END AS status
+FROM (VALUES
+  ('no signals',      0,  0, 50),
+  ('all confirms',   10,  0, 100),
+  ('all disputes',    0, 10, 0),
+  ('50/50',           5,  5, 50),
+  ('75% confirms',    3,  1, 75),
+  ('1 of 3 confirms', 1,  2, 33)
+) AS inputs(label, confirms, disputes, expected)
+ORDER BY inputs.label;
+
+
+-- ── Section 23: Event card fields (migration 025) ────────────────────────
+--
+-- Verifies image_url, summary, and latest_update_at columns on events,
+-- the sync_latest_update_at trigger function, and the feed ordering index.
+
+-- ── Part A: New columns on events ────────────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from events (apply migration 025)'
+  END AS status
+FROM (VALUES ('image_url'), ('summary'), ('latest_update_at')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'events'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: sync_latest_update_at is SECURITY DEFINER ────────────────────
+
+SELECT
+  p.proname AS "function",
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← sync_latest_update_at() missing (apply migration 025)'
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM (SELECT 'sync_latest_update_at'::text AS expected_fn) x
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef, p.proconfig
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'sync_latest_update_at'
+  LIMIT 1
+) p ON p.proname = x.expected_fn;
+
+-- ── Part C: Feed ordering index on events ────────────────────────────────
+
+SELECT
+  CASE WHEN count(*) > 0
+    THEN 'PASS — idx_events_latest_update_at exists'
+    ELSE 'FAIL ← idx_events_latest_update_at missing (apply migration 025)'
+  END AS "feed_ordering_index_status"
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename  = 'events'
+  AND indexname  = 'idx_events_latest_update_at';
+
+
+-- ── Section 24: Update structure (migration 026) ──────────────────────────
+--
+-- Verifies update_type and headline columns on event_updates.
+
+-- ── Part A: New columns on event_updates ─────────────────────────────────
+
+SELECT
+  expected.col,
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS — column exists'
+    ELSE 'FAIL ← column missing from event_updates (apply migration 026)'
+  END AS status
+FROM (VALUES ('update_type'), ('headline')) AS expected(col)
+LEFT JOIN pg_class cl
+  ON cl.relnamespace = 'public'::regnamespace AND cl.relname = 'event_updates'
+LEFT JOIN pg_attribute a
+  ON a.attrelid = cl.oid AND a.attname = expected.col AND NOT a.attisdropped
+ORDER BY expected.col;
+
+-- ── Part B: update_type CHECK constraint ─────────────────────────────────
+--
+-- Covered by Section 12 (chk_event_updates_update_type).
+-- This part confirms the default value is 'report'.
+
+SELECT
+  a.attname                        AS column_name,
+  pg_get_expr(d.adbin, d.adrelid)  AS column_default,
+  CASE
+    WHEN d.adbin IS NULL
+      THEN 'FAIL ← update_type has no default (apply migration 026)'
+    WHEN pg_get_expr(d.adbin, d.adrelid) LIKE '%report%'
+      THEN 'PASS'
+    ELSE 'FAIL ← default does not include ''report'': ' || pg_get_expr(d.adbin, d.adrelid)
+  END AS status
+FROM pg_attribute a
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE a.attrelid = 'public.event_updates'::regclass
+  AND a.attname  = 'update_type'
+  AND NOT a.attisdropped;
+
+-- ── Part C: update_type + event_id index ─────────────────────────────────
+
+SELECT
+  CASE WHEN count(*) > 0
+    THEN 'PASS — idx_event_updates_update_type exists'
+    ELSE 'FAIL ← idx_event_updates_update_type missing (apply migration 026)'
+  END AS "update_type_index_status"
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename  = 'event_updates'
+  AND indexname  = 'idx_event_updates_update_type';
+
+
+-- ── Section 25: Feed RPCs (migration 027) ────────────────────────────────
+--
+-- Verifies get_feed_events() exists, is SECURITY INVOKER, and callable.
+-- Also verifies get_rising_events now returns explicit card columns.
+
+-- ── Part A: get_feed_events existence and security ────────────────────────
+
+SELECT
+  'get_feed_events' AS function_name,
+  CASE
+    WHEN p.proname IS NULL
+      THEN 'FAIL ← function missing (apply migration 027)'
+    WHEN p.prosecdef = true
+      THEN 'FAIL ← function is unexpectedly SECURITY DEFINER (should be INVOKER)'
+    ELSE 'PASS — SECURITY INVOKER'
+  END AS status
+FROM (SELECT 'get_feed_events'::text AS expected_fn) x
+LEFT JOIN (
+  SELECT p.proname, p.prosecdef
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'get_feed_events'
+  LIMIT 1
+) p ON p.proname = x.expected_fn;
+
+-- ── Part B: ingest_event new signature ───────────────────────────────────
+--
+-- Migration 027 replaces ingest_event(text, text, jsonb) with the
+-- 5-argument form (text, text, jsonb, text, text).
+-- Both the old 3-arg form (removed) and the new 5-arg form are checked.
+
+SELECT
+  'ingest_event(text,text,jsonb) — must be gone' AS check_name,
+  CASE WHEN count(*) = 0
+    THEN 'PASS — old 3-arg form no longer exists'
+    ELSE 'FAIL ← old 3-arg ingest_event still present (apply migration 027)'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'ingest_event'
+  AND pronargs = 3
+
+UNION ALL
+
+SELECT
+  'ingest_event(text,text,jsonb,text,text) — must exist',
+  CASE WHEN count(*) > 0
+    THEN 'PASS — 5-arg form exists'
+    ELSE 'FAIL ← new 5-arg ingest_event missing (apply migration 027)'
+  END
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'ingest_event'
+  AND pronargs = 5;
+
+-- ── Part C: get_feed_events mode validation ───────────────────────────────
+--
+-- Valid mode values must not raise errors; an invalid mode must raise.
+-- These are SELECTS from the function — read-only, safe on production.
+
+SELECT
+  modes.label,
+  CASE
+    WHEN modes.should_succeed THEN
+      CASE
+        WHEN (SELECT count(*) FROM public.get_feed_events(modes.mode, 1, 0)) >= 0
+          THEN 'PASS — mode accepted'
+        ELSE 'FAIL ← unexpected error'
+      END
+    ELSE 'SKIP — invalid mode raises exception (expected, tested separately)'
+  END AS status
+FROM (VALUES
+  ('new',      'new',      true),
+  ('verified', 'verified', true),
+  ('rising',   'rising',   true)
+) AS modes(label, mode, should_succeed)
+ORDER BY modes.label;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- PHASE 2 VERIFICATION — migrations 028–034
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── Section P1: Phase 2 tables exist ────────────────────────────────────────
+
+WITH expected_tables AS (
+  SELECT unnest(ARRAY[
+    'source_feeds',
+    'ingestion_jobs',
+    'raw_source_items',
+    'normalized_source_items',
+    'event_sources',
+    'event_media',
+    'event_score_history'
+  ]) AS tbl
+)
+SELECT
+  e.tbl AS "table",
+  CASE
+    WHEN c.relname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← table missing'
+  END AS status
+FROM expected_tables e
+LEFT JOIN pg_class c
+  ON c.relnamespace = 'public'::regnamespace
+  AND c.relkind = 'r'
+  AND c.relname = e.tbl
+ORDER BY e.tbl;
+
+
+-- ── Section P2: RLS enabled on all Phase 2 tables ──────────────────────────
+
+SELECT
+  relname        AS "table",
+  relrowsecurity AS "rls_enabled",
+  CASE WHEN relrowsecurity THEN 'PASS' ELSE 'FAIL ← RLS must be ON' END AS status
+FROM pg_class
+WHERE relnamespace = 'public'::regnamespace
+  AND relkind = 'r'
+  AND relname IN (
+    'source_feeds', 'ingestion_jobs',
+    'raw_source_items', 'normalized_source_items',
+    'event_sources', 'event_media', 'event_score_history'
+  )
+ORDER BY relname;
+
+
+-- ── Section P3: Phase 2 RESTRICTIVE deny policies ──────────────────────────
+
+WITH expected AS (
+  SELECT * FROM (VALUES
+    -- source_feeds: public read, deny writes
+    ('source_feeds',            'deny_source_feeds_insert'),
+    ('source_feeds',            'deny_source_feeds_update'),
+    ('source_feeds',            'deny_source_feeds_delete'),
+    -- ingestion_jobs: fully internal
+    ('ingestion_jobs',          'deny_ingestion_jobs_select'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_insert'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_update'),
+    ('ingestion_jobs',          'deny_ingestion_jobs_delete'),
+    -- raw_source_items: fully internal
+    ('raw_source_items',        'deny_raw_items_select'),
+    ('raw_source_items',        'deny_raw_items_insert'),
+    ('raw_source_items',        'deny_raw_items_update'),
+    ('raw_source_items',        'deny_raw_items_delete'),
+    -- normalized_source_items: fully internal
+    ('normalized_source_items', 'deny_norm_items_select'),
+    ('normalized_source_items', 'deny_norm_items_insert'),
+    ('normalized_source_items', 'deny_norm_items_update'),
+    ('normalized_source_items', 'deny_norm_items_delete'),
+    -- event_sources: public read, deny writes
+    ('event_sources',           'deny_event_sources_insert'),
+    ('event_sources',           'deny_event_sources_update'),
+    ('event_sources',           'deny_event_sources_delete'),
+    -- event_media: public read, deny writes
+    ('event_media',             'deny_event_media_insert'),
+    ('event_media',             'deny_event_media_update'),
+    ('event_media',             'deny_event_media_delete'),
+    -- event_score_history: public read, deny writes
+    ('event_score_history',     'deny_score_history_insert'),
+    ('event_score_history',     'deny_score_history_update'),
+    ('event_score_history',     'deny_score_history_delete')
+  ) AS t(tbl, pol)
+)
+SELECT
+  e.tbl    AS "table",
+  e.pol    AS "policy",
+  CASE
+    WHEN p.policyname IS NULL             THEN 'FAIL ← POLICY MISSING'
+    WHEN p.permissive <> 'RESTRICTIVE'    THEN 'FAIL ← must be RESTRICTIVE'
+    ELSE 'PASS'
+  END AS status
+FROM expected e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+  AND p.tablename = e.tbl
+  AND p.policyname = e.pol
+ORDER BY e.tbl, e.pol;
+
+
+-- ── Section P4: Phase 2 columns on events ──────────────────────────────────
+
+WITH expected_cols AS (
+  SELECT * FROM (VALUES
+    ('events', 'slug'),
+    ('events', 'category'),
+    ('events', 'subcategory'),
+    ('events', 'visibility'),
+    ('events', 'scope'),
+    ('events', 'importance_score'),
+    ('events', 'feed_rank'),
+    ('events', 'country_codes'),
+    ('events', 'region_tags'),
+    ('events', 'city'),
+    ('events', 'latitude'),
+    ('events', 'longitude'),
+    ('events', 'first_seen_at'),
+    ('events', 'last_updated_at'),
+    ('events', 'update_count'),
+    ('events', 'official_confirmation'),
+    ('events', 'conflict_flag')
+  ) AS t(tbl, col)
+)
+SELECT
+  e.col AS "column",
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← column missing from events'
+  END AS status
+FROM expected_cols e
+LEFT JOIN pg_attribute a
+  ON a.attrelid = 'public.events'::regclass
+  AND a.attname = e.col
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY e.col;
+
+
+-- ── Section P5: Phase 2 columns on event_updates ──────────────────────────
+
+WITH expected_cols AS (
+  SELECT * FROM (VALUES
+    ('event_updates', 'published_at'),
+    ('event_updates', 'display_order_time'),
+    ('event_updates', 'normalized_source_item_id'),
+    ('event_updates', 'confidence'),
+    ('event_updates', 'impact_delta_trust'),
+    ('event_updates', 'impact_delta_importance'),
+    ('event_updates', 'is_visible')
+  ) AS t(tbl, col)
+)
+SELECT
+  e.col AS "column",
+  CASE
+    WHEN a.attname IS NOT NULL THEN 'PASS'
+    ELSE 'FAIL ← column missing from event_updates'
+  END AS status
+FROM expected_cols e
+LEFT JOIN pg_attribute a
+  ON a.attrelid = 'public.event_updates'::regclass
+  AND a.attname = e.col
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY e.col;
+
+
+-- ── Section P6: Phase 2 SECURITY DEFINER functions ─────────────────────────
+
+SELECT
+  p.proname    AS "function",
+  p.prosecdef  AS "security_definer",
+  CASE
+    WHEN NOT p.prosecdef
+      THEN 'FAIL ← must be SECURITY DEFINER'
+    WHEN NOT (p.proconfig @> ARRAY['search_path=public'])
+      THEN 'FAIL ← missing SET search_path=public'
+    ELSE 'PASS'
+  END AS status
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN (
+    'compute_importance_score',   -- migration 033
+    'compute_feed_rank',          -- migration 033
+    'recompute_event_state',      -- migration 033
+    'create_event_for_item',      -- migration 034
+    'attach_item_to_event',       -- migration 034
+    'get_event_detail',           -- migration 034
+    'get_event_updates_for_detail', -- migration 034
+    'get_event_score_history',    -- migration 034
+    'get_event_sources_detail',   -- migration 034
+    'sync_update_count'           -- migration 032
+  )
+ORDER BY p.proname;
+
+
+-- ── Section P7: trg_sync_update_count trigger ──────────────────────────────
+
+SELECT
+  t.tgname   AS "trigger",
+  c.relname  AS "table",
+  CASE t.tgenabled
+    WHEN 'O' THEN 'enabled'
+    WHEN 'D' THEN 'DISABLED'
+    ELSE t.tgenabled::text
+  END AS state,
+  CASE
+    WHEN t.tgname IS NULL         THEN 'FAIL ← trigger missing'
+    WHEN t.tgenabled = 'D'        THEN 'FAIL ← trigger is disabled'
+    -- AFTER INSERT OR UPDATE OR DELETE = tgtype 29
+    WHEN t.tgtype <> 29           THEN 'FAIL ← wrong tgtype: ' || t.tgtype
+    ELSE 'PASS'
+  END AS status
+FROM pg_trigger t
+JOIN pg_class c ON c.oid = t.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relname = 'event_updates'
+  AND t.tgname = 'trg_sync_update_count';
+
+
+-- ── Section P8: events.status CHECK allows Phase 2 values ──────────────────
+
+SELECT
+  pg_get_constraintdef(c.oid) AS "status_check_definition",
+  CASE
+    WHEN pg_get_constraintdef(c.oid) LIKE '%new%'
+     AND pg_get_constraintdef(c.oid) LIKE '%conflicted%'
+     AND pg_get_constraintdef(c.oid) LIKE '%archived%'
+      THEN 'PASS — Phase 2 values present'
+    ELSE 'FAIL ← Phase 2 status values missing from constraint'
+  END AS status
+FROM pg_constraint c
+WHERE c.conrelid = 'public.events'::regclass
+  AND c.contype = 'c'
+  AND c.conname = 'events_status_check';
+
+
+-- ── Section P9: event_updates.update_type CHECK has Phase 2 values ─────────
+
+SELECT
+  pg_get_constraintdef(c.oid) AS "update_type_check_definition",
+  CASE
+    WHEN pg_get_constraintdef(c.oid) LIKE '%first_report%'
+     AND pg_get_constraintdef(c.oid) LIKE '%official_confirmation%'
+     AND pg_get_constraintdef(c.oid) LIKE '%closure%'
+      THEN 'PASS — Phase 2 values present'
+    ELSE 'FAIL ← Phase 2 update_type values missing from constraint'
+  END AS status
+FROM pg_constraint c
+WHERE c.conrelid = 'public.event_updates'::regclass
+  AND c.contype = 'c'
+  AND c.conname = 'chk_event_updates_update_type';
+
+
+-- ── Section P10: source_feeds unique indexes ────────────────────────────────
+
+SELECT
+  indexname    AS "index",
+  indexdef     AS "definition",
+  CASE WHEN indexname IS NOT NULL THEN 'PASS' ELSE 'FAIL ← index missing' END AS status
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename = 'source_feeds'
+  AND indexname IN ('source_feeds_slug_key', 'source_feeds_feed_url_key')
+ORDER BY indexname;
+
+
 -- ── Summary ───────────────────────────────────────────────────────────────
--- All rows should show 'PASS' (or 'SKIP') after migrations 001–022 are applied.
+-- All rows should show 'PASS' (or 'SKIP') after migrations 001–034 are applied.
 -- Any 'FAIL' row indicates a configuration problem to investigate.

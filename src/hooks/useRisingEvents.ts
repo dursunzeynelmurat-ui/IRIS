@@ -13,14 +13,8 @@ export interface RisingEventsResult {
 /**
  * Backend-driven rising events via the get_rising_events RPC.
  *
- * Rising is scored server-side:
- *   follow_count × 10 + status_bonus + trust_score / 10
- *
- * The server formula means the Rising tab reflects real engagement
- * (source coverage, user signals, follows) rather than a client-side heuristic.
- *
- * On pull-to-refresh, stale data is kept visible until the new response
- * arrives so the tab never flashes empty.
+ * Ranking (server-side): feed_rank composite (trust, importance, recency, engagement).
+ * Only 'new' + 'developing' events are included.
  */
 export function useRisingEvents(): RisingEventsResult {
   const [events, setEvents]         = useState<Event[]>([]);

@@ -28,11 +28,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (error) console.error('[AuthProvider] getSession:', error);
-      setUserId(data.session?.user.id ?? null);
-      setLoading(false);
-    });
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (error) console.error('[AuthProvider] getSession:', error.message);
+        setUserId(data.session?.user.id ?? null);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        console.error('[AuthProvider] getSession fatal:', err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user.id ?? null);

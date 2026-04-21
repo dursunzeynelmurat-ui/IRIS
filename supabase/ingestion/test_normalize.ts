@@ -78,7 +78,7 @@ function expectOk(
 
 const VALID: RawSourceItem = {
   headline: 'Flood in northern district',
-  status: 'emerging',
+  status: 'new',
   content: 'Heavy rainfall causing road closures.',
   source_name: 'Reuters',
 };
@@ -89,16 +89,19 @@ console.log('\nGood inputs — must normalize without error:\n');
 
 expectOk('minimal valid item', VALID, (r) => {
   if (r.title !== 'Flood in northern district') return `title mismatch: "${r.title}"`;
-  if (r.status !== 'emerging') return `status mismatch: "${r.status}"`;
+  if (r.status !== 'new') return `status mismatch: "${r.status}"`;
   if (r.updates.length !== 1) return `expected 1 update, got ${r.updates.length}`;
   if (r.updates[0].content !== 'Heavy rainfall causing road closures.') return 'content mismatch';
   if (r.updates[0].source_name !== 'Reuters') return 'source_name mismatch';
   if ('source_url' in r.updates[0]) return 'source_url should be absent when not provided';
 });
 
-expectOk('all four valid statuses', { ...VALID, status: 'developing' });
+expectOk('all Phase 2 statuses', { ...VALID, status: 'developing' });
 expectOk('', { ...VALID, status: 'verified' });
-expectOk('', { ...VALID, status: 'disputed' });
+expectOk('', { ...VALID, status: 'conflicted' });
+expectOk('', { ...VALID, status: 'contained' });
+expectOk('', { ...VALID, status: 'resolved' });
+expectOk('', { ...VALID, status: 'archived' });
 
 expectOk('source_url propagates to updates[0]',
   { ...VALID, source_url: 'https://reuters.com/flood' },
@@ -177,6 +180,8 @@ expectError('invalid status "breaking"', { ...VALID, status: 'breaking' as never
 expectError('invalid status "unknown"', { ...VALID, status: 'unknown' as never }, 'status');
 expectError('invalid status empty string', { ...VALID, status: '' as never }, 'status');
 expectError('invalid status "Emerging" (case-sensitive)', { ...VALID, status: 'Emerging' as never }, 'status');
+expectError('legacy status "emerging" rejected', { ...VALID, status: 'emerging' as never }, 'status');
+expectError('legacy status "disputed" rejected', { ...VALID, status: 'disputed' as never }, 'status');
 
 // ── Bad inputs — content ────────────────────────────────────────────────────
 

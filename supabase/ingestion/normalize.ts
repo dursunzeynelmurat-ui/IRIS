@@ -14,8 +14,8 @@
  *   STATUS:
  *     Source: raw.status, taken directly from the adapter.
  *     Adapters are responsible for assigning a meaningful status.
- *     'emerging' is the safe default when the adapter is uncertain.
- *     Allowed values: emerging | developing | verified | disputed.
+ *     'new' is the safe default when the adapter is uncertain.
+ *     Allowed values: new | developing | verified | conflicted | contained | resolved | archived.
  *     Normalization rejects any other value with NormalizationError.
  *
  *   UPDATES:
@@ -39,7 +39,7 @@
 
 import type { RawSourceItem, NormalizedEvent, NormalizedUpdate } from './types';
 
-const VALID_STATUSES = new Set(['emerging', 'developing', 'verified', 'disputed']);
+const VALID_STATUSES = new Set(['new', 'developing', 'verified', 'conflicted', 'contained', 'resolved', 'archived']);
 
 export class NormalizationError extends Error {
   constructor(message: string) {
@@ -58,7 +58,7 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
   // ── Status ─────────────────────────────────────────────────────────────
   if (!VALID_STATUSES.has(raw.status)) {
     throw new NormalizationError(
-      `invalid status "${raw.status}". Valid: emerging, developing, verified, disputed`,
+      `invalid status "${raw.status}". Valid: new, developing, verified, conflicted, contained, resolved, archived`,
     );
   }
 
@@ -77,7 +77,9 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
     {
       content: primaryContent,
       source_name: primarySourceName,
-      ...(raw.source_url ? { source_url: raw.source_url } : {}),
+      ...(raw.source_url   ? { source_url:   raw.source_url   } : {}),
+      ...(raw.source_id    ? { source_id:    raw.source_id    } : {}),
+      ...(raw.update_type  ? { update_type:  raw.update_type  } : {}),
     },
   ];
 
@@ -102,7 +104,10 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
       updates.push({
         content,
         source_name,
-        ...(u.source_url ? { source_url: u.source_url } : {}),
+        ...(u.source_url   ? { source_url:   u.source_url   } : {}),
+        ...(u.source_id    ? { source_id:    u.source_id    } : {}),
+        ...(u.update_type  ? { update_type:  u.update_type  } : {}),
+        ...(u.headline     ? { headline:     u.headline     } : {}),
       });
     }
   }
@@ -111,5 +116,7 @@ export function normalizeSourceItem(raw: RawSourceItem): NormalizedEvent {
     title,
     status: raw.status,
     updates,
+    ...(raw.image_url ? { image_url: raw.image_url } : {}),
+    ...(raw.summary   ? { summary:   raw.summary   } : {}),
   };
 }
