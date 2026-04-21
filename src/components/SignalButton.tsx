@@ -5,14 +5,12 @@ import { SignalType } from '../types';
 interface SignalButtonProps {
   type: SignalType;
   active: boolean;
-  /** Show a spinner on this button while this specific signal is submitting. */
   loading: boolean;
   disabled: boolean;
-  /** Dim when the other signal type is active. */
   faded?: boolean;
   /**
    * 'default' — full-width pill for the detail screen (flex: 1 from parent row).
-   * 'compact' — self-sized pill for feed cards (narrower padding, shorter height).
+   * 'compact' — self-sized pill, narrower padding.
    */
   size?: 'default' | 'compact';
   onPress: () => void;
@@ -27,15 +25,14 @@ export function SignalButton({
   size = 'default',
   onPress,
 }: SignalButtonProps) {
-  const { resolved, colors } = useTheme();
+  const { colors, resolved } = useTheme();
 
-  // Confirm: green — WCAG-compliant in both themes.
-  // Dispute: IRIS red — brand color, theme-aware.
-  const confirmColor = resolved === 'dark' ? '#30d158' : '#1e7a30';
-  const accentColor  = type === 'confirm' ? confirmColor : colors.iris;
+  // Confirm: green (semantic — agreement/trust).
+  // Dispute: danger/red (semantic — disagreement/flag). Never the brand blue.
+  const confirmColor = resolved === 'dark' ? '#30D158' : '#1E7A30';
+  const accentColor  = type === 'confirm' ? confirmColor : colors.danger;
 
   const label    = type === 'confirm' ? 'Confirm' : 'Dispute';
-  const icon     = type === 'confirm' ? '✓' : '✕';
   const isCompact = size === 'compact';
 
   return (
@@ -50,7 +47,6 @@ export function SignalButton({
       onPress={onPress}
       disabled={!!disabled}
       activeOpacity={0.8}
-      // Extend touch area on compact pills to meet iOS 44pt minimum.
       hitSlop={isCompact ? { top: 8, bottom: 8, left: 6, right: 6 } : undefined}
       accessibilityRole="button"
       accessibilityLabel={`${label} event`}
@@ -68,7 +64,7 @@ export function SignalButton({
             { color: active ? '#fff' : accentColor },
           ]}
         >
-          {isCompact ? `${icon} ${label}` : label}
+          {label}
         </Text>
       )}
     </TouchableOpacity>
@@ -83,19 +79,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Full-size variant (detail screen — takes flex: 1 from parent row)
   btnDefault: {
     flex: 1,
-    paddingVertical: 10,
-    minHeight: 40,
+    paddingVertical: 12,
+    minHeight: 44,
   },
   textDefault: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
   },
 
-  // Compact variant (feed cards).
-  // Visual size is small (~32px tall) but hitSlop extends touch target to 44pt+.
   btnCompact: {
     paddingVertical: 7,
     paddingHorizontal: 14,

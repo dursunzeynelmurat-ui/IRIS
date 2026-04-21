@@ -24,11 +24,6 @@ function emailInitial(email: string | null): string {
   return email.charAt(0).toUpperCase();
 }
 
-function shortId(id: string | null): string {
-  if (!id) return '—';
-  return id.length > 8 ? `···${id.slice(-8)}` : id;
-}
-
 function formatMemberSince(isoDate: string | null | undefined): string {
   if (!isoDate) return '';
   try {
@@ -75,7 +70,6 @@ export function ProfileScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const [email, setEmail]       = useState<string | null>(null);
-  const [userId, setUserId]     = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string>('');
   const [signingOut, setSigningOut] = useState(false);
 
@@ -83,7 +77,6 @@ export function ProfileScreen({ navigation }: Props) {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
       setEmail(user?.email ?? null);
-      setUserId(user?.id ?? null);
       setMemberSince(formatMemberSince(user?.created_at));
     });
   }, []);
@@ -138,9 +131,6 @@ export function ProfileScreen({ navigation }: Props) {
             >
               {email ?? '—'}
             </Text>
-            <Text style={[styles.userIdText, { color: colors.textTertiary }]}>
-              {shortId(userId)}
-            </Text>
             {!!memberSince && (
               <Text style={[styles.memberSince, { color: colors.textTertiary }]}>
                 {memberSince}
@@ -153,8 +143,20 @@ export function ProfileScreen({ navigation }: Props) {
         <SectionLabel label="SETTINGS" color={colors.textTertiary} />
         <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
           <NavRow
-            label="Appearance"
+            label="Preferences"
             onPress={() => navigation.navigate('Settings')}
+            textColor={colors.textPrimary}
+            borderColor={colors.border}
+            accentColor={colors.textTertiary}
+          />
+        </View>
+
+        {/* ── Intelligence section ── */}
+        <SectionLabel label="INTELLIGENCE" color={colors.textTertiary} />
+        <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
+          <NavRow
+            label="Send a Signal"
+            onPress={() => navigation.navigate('SendSignal', {})}
             textColor={colors.textPrimary}
             borderColor={colors.border}
             accentColor={colors.textTertiary}
@@ -175,9 +177,9 @@ export function ProfileScreen({ navigation }: Props) {
             accessibilityState={{ disabled: signingOut }}
           >
             {signingOut ? (
-              <ActivityIndicator size="small" color={colors.iris} />
+              <ActivityIndicator size="small" color={colors.danger} />
             ) : (
-              <Text style={[styles.signOutLabel, { color: colors.iris }]}>
+              <Text style={[styles.signOutLabel, { color: colors.danger }]}>
                 Sign Out
               </Text>
             )}
@@ -252,10 +254,6 @@ const styles = StyleSheet.create({
   emailText: {
     fontSize: 15,
     fontWeight: '600',
-  },
-  userIdText: {
-    fontSize: 12,
-    letterSpacing: 0.4,
   },
   memberSince: {
     fontSize: 11,

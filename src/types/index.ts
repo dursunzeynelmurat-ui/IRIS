@@ -17,6 +17,9 @@ export type SignalType = 'confirm' | 'dispute';
 /** Feed mode corresponding to the three tabs in the IRIS feed UI. */
 export type FeedMode = 'new' | 'verified' | 'rising';
 
+/** Alias — used by frontend contexts and EventListScreen. */
+export type FeedTab = FeedMode;
+
 // public.events
 export interface Event {
   id: string;
@@ -75,29 +78,32 @@ export interface EventFollow {
   user_id: string;
   event_id: string;
   created_at: string;
+  latest_update_at?: string | null;
+  summary?: string | null;
+  image_url?: string | null;
 }
 
 /** Classification of an event_update for timeline icon and color coding. */
 export type UpdateType =
   // Phase 1 values — display-oriented
-  | 'report'             // Standard report from a named source (default)
-  | 'witness'            // Eyewitness or on-the-ground account
-  | 'official'           // Statement from an official authority
-  | 'confirmed'          // Explicitly confirms a prior report
-  | 'under_verification' // Early/unverified signal; treat with caution
-  | 'analysis'           // Contextual analysis or editorial assessment
-  | 'correction'         // Corrects a prior update
+  | 'report'
+  | 'witness'
+  | 'official'
+  | 'confirmed'
+  | 'under_verification'
+  | 'analysis'
+  | 'correction'
   // Phase 2 values — lifecycle-oriented
-  | 'first_report'          // First item that created this event
-  | 'official_confirmation' // Confirmation from an official source
-  | 'casualty_update'       // Updated casualty figures
-  | 'location_refinement'   // More precise location information
-  | 'escalation'            // Situation has worsened
-  | 'deescalation'          // Situation has improved
-  | 'denial'                // Official denial of earlier reports
-  | 'contradiction'         // Source contradicts prevailing narrative
-  | 'closure'               // Event has ended/been resolved
-  | 'generic_update';       // General update not fitting other types
+  | 'first_report'
+  | 'official_confirmation'
+  | 'casualty_update'
+  | 'location_refinement'
+  | 'escalation'
+  | 'deescalation'
+  | 'denial'
+  | 'contradiction'
+  | 'closure'
+  | 'generic_update';
 
 // public.event_updates
 export interface EventUpdate {
@@ -106,24 +112,16 @@ export interface EventUpdate {
   content: string;
   source_name: string;
   source_url: string | null;
-  /** FK to public.sources. NULL for updates not linked to a structured source. */
   source_id: string | null;
-  /** Nature of the update for timeline rendering. Defaults to 'report'. */
   update_type: UpdateType;
-  /** Short bold headline for the update (1 line). NULL for older updates. */
   headline: string | null;
   created_at: string;
 
   // ── Phase 2 additions ──────────────────────────────────────────────────────
-  /** When the source originally published this information. */
   published_at: string | null;
-  /** Explicit ordering timestamp (defaults to published_at ?? created_at). */
   display_order_time: string | null;
-  /** FK to normalized_source_items. */
   normalized_source_item_id: string | null;
-  /** 0–100 confidence in this update's accuracy. */
   confidence: number;
-  /** Whether this update appears in the visible timeline. */
   is_visible: boolean;
 }
 
@@ -143,7 +141,7 @@ export interface Source {
   id: string;
   name: string;
   domain: string | null;
-  credibility: number;     // 0–100; 50 = neutral/unknown
+  credibility: number;
   source_type: SourceType;
   verified: boolean;
   created_at: string;
@@ -152,7 +150,6 @@ export interface Source {
 /**
  * Card-ready event payload returned by get_feed_events RPC.
  * Subset of Event fields sufficient for feed card rendering.
- * Does NOT include source_score / crowd_score (detail-page only).
  */
 export interface EventCard {
   id: string;
@@ -167,7 +164,6 @@ export interface EventCard {
   follow_count: number;
   latest_update_at: string | null;
   created_at: string;
-  // Phase 2 additions surfaced on cards:
   official_confirmation: boolean;
   conflict_flag: boolean;
   update_count: number;
@@ -278,12 +274,12 @@ export interface SourceFeed {
   source_type: FeedSourceType;
   feed_url: string;
   reliability_tier: ReliabilityTier;
-  credibility_score: number;      // 0–100
+  credibility_score: number;
   poll_interval_seconds: number;
   parser_type: 'rss2' | 'atom' | 'json_feed' | 'html_page';
   source_policy: SourcePolicy;
   is_active: boolean;
-  health_score: number;           // 0–100
+  health_score: number;
   last_fetched_at: string | null;
   last_success_at: string | null;
   last_error_at: string | null;

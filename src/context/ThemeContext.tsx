@@ -1,24 +1,5 @@
-/**
- * ThemeContext — single source of truth for the resolved UI theme.
- *
- * ThemeProvider takes a userId and internally reads the user's persisted
- * preference from user_preferences via useUserPreferences. It resolves that
- * preference to a concrete scheme ('light' | 'dark') and exposes the full
- * color token set for the app's design system.
- *
- * ThemeProvider must be rendered inside AuthProvider and only when the user
- * is authenticated (userId is a string, not null). See AuthedApp in App.tsx.
- *
- * Context shape:
- *   preference   — stored value: 'system' | 'light' | 'dark'
- *   resolved     — actual scheme in use after resolving 'system'
- *   colors       — full design-system token set for the resolved scheme
- *   setPreference — persists + applies a new preference (optimistic)
- */
-
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
-import { useUserPreferences } from '../hooks/useUserPreferences';
 import type { ThemePreference } from '../types';
 
 // Re-export for screens that import ThemePreference from this module.
@@ -44,46 +25,55 @@ export interface ThemeColors {
   textSecondary: string;
   textTertiary: string;
 
-  // Brand accent — IRIS red.
-  // Single source of truth for brand expression across all themes.
+  // Brand accent — IRIS blue.
   iris: string;
   irisSubtle: string;
+
+  // Semantic danger — dispute actions, errors, destructive states.
+  danger: string;
+  dangerSubtle: string;
 }
 
 // ── Color palettes ────────────────────────────────────────────
 
-const DARK: ThemeColors = {
-  bg:            '#0d0d0d',
-  bgElevated:    '#1c1c1e',
-  bgInput:       '#1c1c1e',
-  bgOverlay:     '#2c2c2e',
+const LIGHT: ThemeColors = {
+  bg:            '#FFFFFF',
+  bgElevated:    '#FFFFFF',
+  bgInput:       '#F2F4F7',
+  bgOverlay:     '#EEF0F4',
 
-  border:        '#2c2c2e',
-  borderStrong:  '#3a3a3c',
+  border:        '#E8EAED',
+  borderStrong:  '#DADCE0',
 
-  textPrimary:   '#f2f2f2',
-  textSecondary: '#8e8e93',
-  textTertiary:  '#636366',
+  textPrimary:   '#1A1A2E',
+  textSecondary: '#5F6368',
+  textTertiary:  '#9AA0A6',
 
-  iris:          '#e5193e',
-  irisSubtle:    '#e5193e22',
+  iris:          '#1A73E8',
+  irisSubtle:    '#1A73E815',
+
+  danger:        '#C5221F',
+  dangerSubtle:  '#C5221F15',
 };
 
-const LIGHT: ThemeColors = {
-  bg:            '#f2f2f7',
-  bgElevated:    '#ffffff',
-  bgInput:       '#ffffff',
-  bgOverlay:     '#e5e5ea',
+const DARK: ThemeColors = {
+  bg:            '#0D1117',
+  bgElevated:    '#161B22',
+  bgInput:       '#21262D',
+  bgOverlay:     '#2D333B',
 
-  border:        '#c6c6c8',
-  borderStrong:  '#aeaeb2',
+  border:        '#30363D',
+  borderStrong:  '#484F58',
 
-  textPrimary:   '#0d0d0d',
-  textSecondary: '#48484a',
-  textTertiary:  '#8e8e93',
+  textPrimary:   '#E6EDF3',
+  textSecondary: '#8B949E',
+  textTertiary:  '#6E7681',
 
-  iris:          '#c90f2e',
-  irisSubtle:    '#c90f2e18',
+  iris:          '#58A6FF',
+  irisSubtle:    '#58A6FF15',
+
+  danger:        '#FF453A',
+  dangerSubtle:  '#FF453A15',
 };
 
 // ── Context ───────────────────────────────────────────────────
@@ -105,43 +95,36 @@ const ThemeContext = createContext<ThemeContextValue>({
 // ── Provider ──────────────────────────────────────────────────
 
 interface ThemeProviderProps {
-  /** Authenticated user ID. ThemeProvider is only mounted when userId is known. */
-  userId: string;
   children: ReactNode;
+  savedPreference?: ThemePreference;
+  onSavePreference?: (p: ThemePreference) => Promise<void>;
 }
 
-/**
- * ThemeProvider wires three concerns together:
- *
- *   1. Backend persistence  — useUserPreferences reads/writes user_preferences
- *   2. System scheme        — useColorScheme() resolves 'system' to light|dark
- *   3. Design tokens        — DARK/LIGHT palettes map resolved scheme to colors
- *
- * setPreference delegates to updateTheme, which is optimistic inside
- * useUserPreferences: the change is applied immediately in the hook's state
- * and re-fetched from the DB on failure, reverting automatically.
- */
-export function ThemeProvider({ userId, children }: ThemeProviderProps) {
+export function ThemeProvider({ children, savedPreference, onSavePreference }: ThemeProviderProps) {
   const systemScheme = useColorScheme();
-  const { preferences, updateTheme } = useUserPreferences(userId);
+  const [preference, setPreferenceState] = useState<ThemePreference>(savedPreference ?? 'system');
 
-  // Derive preference from backend state; default to 'system' while loading.
-  const preference: ThemePreference = preferences?.theme ?? 'system';
+  useEffect(() => {
+    if (savedPreference !== undefined) {
+      setPreferenceState(savedPreference);
+    }
+  }, [savedPreference]);
 
   const resolved: ResolvedTheme = preference === 'system'
     ? (systemScheme === 'light' ? 'light' : 'dark')
     : preference;
 
-  // LIGHT and DARK are module-level constants — stable references.
   const colors = resolved === 'light' ? LIGHT : DARK;
 
-  // setPreference is fire-and-forget from the caller's perspective.
-  // updateTheme handles optimism and DB-revert internally.
   const setPreference = useCallback((p: ThemePreference) => {
-    updateTheme(p).catch((err: unknown) => {
-      console.warn('[ThemeContext] setPreference failed:', err);
-    });
-  }, [updateTheme]);
+    const previous = preference;
+    setPreferenceState(p);
+    if (onSavePreference) {
+      onSavePreference(p).catch(() => {
+        setPreferenceState(previous);
+      });
+    }
+  }, [preference, onSavePreference]);
 
   const value = useMemo(
     () => ({ preference, resolved, colors, setPreference }),

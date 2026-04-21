@@ -4,26 +4,21 @@ import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
+import { FeedPreferenceProvider } from './src/context/FeedPreferenceContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAuth } from './src/hooks/useAuth';
+import { useUserPreferences } from './src/hooks/useUserPreferences';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { SendSignalScreen } from './src/screens/SendSignalScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { SignInScreen } from './src/screens/SignInScreen';
 import type { RootStackParamList } from './src/types/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-/**
- * AppContent renders the authenticated navigation stack.
- * It is always inside ThemeProvider (mounted by AuthedApp below), so
- * useTheme() is safe here.
- *
- * The navigation theme is derived directly from ThemeContext color tokens —
- * one source of truth for color values; no static duplicate constants.
- */
 function AppContent() {
   const { resolved, colors } = useTheme();
 
@@ -35,7 +30,6 @@ function AppContent() {
         ...base.colors,
         primary:    colors.iris,
         background: colors.bg,
-        // dark: header blends with screen bg; light: white header over #f2f2f7 body
         card:       resolved === 'dark' ? colors.bg : colors.bgElevated,
         text:       colors.textPrimary,
         border:     colors.border,
@@ -48,30 +42,21 @@ function AppContent() {
   return (
     <ErrorBoundary>
       <NavigationContainer theme={navTheme}>
-        {/* Single StatusBar for the entire authenticated navigation tree. */}
         <StatusBar style={statusStyle} />
         <Stack.Navigator>
-          {/* ── Tab-level screens (custom BottomTabBar rendered inside each) ── */}
+          {/* ── Tab-level screens ── */}
           <Stack.Screen
             name="EventList"
             component={EventListScreen}
-            options={{
-              title: 'IRIS',
-              headerTitleStyle: styles.navTitle,
-              headerShadowVisible: false,
-              animation: 'none',
-            }}
+            options={{ headerShown: false, animation: 'none' }}
           />
           <Stack.Screen
             name="Profile"
             component={ProfileScreen}
-            options={{
-              headerShown: false,
-              animation: 'none',
-            }}
+            options={{ headerShown: false, animation: 'none' }}
           />
 
-          {/* ── Deep screens (standard stack push/pop navigation) ── */}
+          {/* ── Deep screens ── */}
           <Stack.Screen
             name="EventDetail"
             component={EventDetailScreen}
@@ -85,7 +70,16 @@ function AppContent() {
             name="Settings"
             component={SettingsScreen}
             options={{
-              title: 'Appearance',
+              title: 'Preferences',
+              headerBackTitle: '',
+              headerShadowVisible: false,
+            }}
+          />
+          <Stack.Screen
+            name="SendSignal"
+            component={SendSignalScreen}
+            options={{
+              title: 'Send a Signal',
               headerBackTitle: '',
               headerShadowVisible: false,
             }}
@@ -96,18 +90,9 @@ function AppContent() {
   );
 }
 
-/**
- * AuthedApp gates on authentication state.
- *
- * ThemeProvider is mounted only when the user is authenticated, because:
- *   1. user_preferences is per-user — no valid row exists for unauthenticated
- *   2. Splash and sign-in screens use hardcoded dark colors; no token system needed
- *
- * Once userId is known, ThemeProvider(userId) fetches the stored preference
- * and provides the full color token system to AppContent and all its descendants.
- */
 function AuthedApp() {
   const { userId, loading } = useAuth();
+  const { theme, defaultFeed, updateTheme, updateDefaultFeed } = useUserPreferences(userId);
 
   if (loading) {
     return (
@@ -131,17 +116,14 @@ function AuthedApp() {
   }
 
   return (
-    <ThemeProvider userId={userId}>
-      <AppContent />
+    <ThemeProvider savedPreference={theme} onSavePreference={updateTheme}>
+      <FeedPreferenceProvider savedFeed={defaultFeed} onSaveFeed={updateDefaultFeed}>
+        <AppContent />
+      </FeedPreferenceProvider>
     </ThemeProvider>
   );
 }
 
-/**
- * App is the true root. AuthProvider covers the entire tree so both
- * AuthedApp (preference fetch) and AppContent (auth gating) share one
- * auth subscription.
- */
 export default function App() {
   return (
     <AuthProvider>
@@ -151,27 +133,17 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  // ── Splash ──
   splash: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0d0d0d',
   },
   splashWordmark: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#e5193e',
     letterSpacing: 8,
   },
   splashSpinner: {
     marginTop: 28,
-  },
-
-  // ── Navigation header title ──
-  navTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 5,
   },
 });

@@ -28,10 +28,11 @@ export function useEvents(): UseEventsResult {
     const { data, error: dbError } = await supabase
       .from('events')
       .select('*')
+      .order('latest_update_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
 
     if (dbError) {
-      console.error('[useEvents]', dbError);
+      if (__DEV__) console.error('[useEvents]', dbError);
       setError('Unable to load events. Please try again.');
     } else {
       setEvents(data ?? []);
