@@ -66,7 +66,11 @@ function TimelineItem({ update, isLast }: { update: EventUpdate; isLast: boolean
   const linkColor = resolved === 'dark' ? '#58A6FF' : '#1A73E8';
 
   const dotColor = (() => {
-    if (update.update_type === 'breaking')   return colors.iris;
+    if (
+      update.update_type === 'escalation' ||
+      update.update_type === 'first_report' ||
+      update.update_type === 'official_confirmation'
+    ) return colors.iris;
     if (update.update_type === 'correction') return resolved === 'dark' ? '#FF9F0A' : '#B25000';
     return colors.borderStrong;
   })();

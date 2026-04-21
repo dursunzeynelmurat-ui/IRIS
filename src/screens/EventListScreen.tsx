@@ -109,9 +109,24 @@ export function EventListScreen({ navigation }: Props) {
     setActiveTab(key);
   }
 
-  // ── Full-screen states ────────────────────────────────────────
+  // ── Full-screen states — keyed to the active tab ─────────────
 
-  if (loading) {
+  const activeTabLoading =
+    activeTab === 'rising'   ? risingLoading   :
+    activeTab === 'verified' ? verifiedLoading :
+    loading;
+
+  const activeTabError =
+    activeTab === 'rising'   ? risingError   :
+    activeTab === 'verified' ? verifiedError :
+    error;
+
+  const activeTabRefetch =
+    activeTab === 'rising'   ? refetchRising   :
+    activeTab === 'verified' ? refetchVerified :
+    refetch;
+
+  if (activeTabLoading) {
     return (
       <View style={[styles.fullCentered, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={colors.iris} />
@@ -119,7 +134,7 @@ export function EventListScreen({ navigation }: Props) {
     );
   }
 
-  if (error) {
+  if (activeTabError) {
     return (
       <View style={[styles.fullCentered, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
         <Text style={[styles.errorText, { color: colors.textPrimary }]}>
@@ -127,7 +142,7 @@ export function EventListScreen({ navigation }: Props) {
         </Text>
         <TouchableOpacity
           style={[styles.retryBtn, { borderColor: colors.iris }]}
-          onPress={refetch}
+          onPress={activeTabRefetch}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Retry loading events"

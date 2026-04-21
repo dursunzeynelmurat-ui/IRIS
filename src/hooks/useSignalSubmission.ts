@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-const MAX_LENGTH = 140;
+const MAX_LENGTH    = 140;
+const COOLDOWN_SECS = 30;
 
 export interface UseSignalSubmissionResult {
   submitting: boolean;
   success: boolean;
   error: string | null;
+  cooldownRemaining: number;
   submit: (content: string, eventId?: string) => Promise<void>;
   reset: () => void;
 }
 
 export function useSignalSubmission(userId: string | null): UseSignalSubmissionResult {
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess]       = useState(false);
-  const [error, setError]           = useState<string | null>(null);
-  const mountedRef                  = useRef(true);
+  const [submitting, setSubmitting]               = useState(false);
+  const [success, setSuccess]                     = useState(false);
+  const [error, setError]                         = useState<string | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const mountedRef       = useRef(true);
+  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
     };
   }, []);
 
@@ -56,6 +61,19 @@ export function useSignalSubmission(userId: string | null): UseSignalSubmissionR
         setError(result.message ?? 'Submission not accepted. Please try again later.');
       } else {
         setSuccess(true);
+        // Client-side cooldown prevents rapid re-submission before the server
+        // rate-limit window resets.
+        if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
+        let remaining = COOLDOWN_SECS;
+        setCooldownRemaining(remaining);
+        cooldownTimerRef.current = setInterval(() => {
+          remaining -= 1;
+          if (mountedRef.current) setCooldownRemaining(remaining);
+          if (remaining <= 0) {
+            clearInterval(cooldownTimerRef.current!);
+            cooldownTimerRef.current = null;
+          }
+        }, 1000);
       }
     }
 
@@ -65,7 +83,8 @@ export function useSignalSubmission(userId: string | null): UseSignalSubmissionR
   const reset = useCallback(() => {
     setSuccess(false);
     setError(null);
+    // Cooldown persists across resets — user must wait before submitting again.
   }, []);
 
-  return { submitting, success, error, submit, reset };
+  return { submitting, success, error, cooldownRemaining, submit, reset };
 }
