@@ -1,32 +1,32 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type { ThemePreference, UserPreferences } from '../types';
+import type { FeedMode, ThemePreference, UserPreferences } from '../types';
 
 interface UseUserPreferencesResult {
   preferences: UserPreferences | null;
   loading: boolean;
   error: string | null;
   updateTheme: (theme: ThemePreference) => Promise<void>;
+  updateDefaultFeed: (feed: FeedMode) => Promise<void>;
 }
 
 /**
  * Reads and writes the current user's preferences row.
  *
  * - Fetches once on mount (or when userId changes).
- * - updateTheme performs an optimistic update then upserts to the DB.
- *   On failure the optimistic update is reverted by re-fetching the DB state.
- * - Pass userId=null (unauthenticated) → preferences is null, updateTheme is a no-op.
+ * - updateTheme / updateDefaultFeed each perform an optimistic update then
+ *   upsert to the DB. On failure the optimistic update is reverted by
+ *   re-fetching the DB state.
+ * - Pass userId=null (unauthenticated) → preferences is null, mutations are no-ops.
  *
  * The preferences row is guaranteed to exist for every authenticated user
- * (created by handle_new_user trigger, migration 018). If for any reason it
- * is missing, updateTheme will create it via upsert.
+ * (created by handle_new_user trigger, migration 018 / 039). If for any reason
+ * it is missing, the upsert in each update function will create it.
  */
 export function useUserPreferences(userId: string | null): UseUserPreferencesResult {
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
-  // Start loading immediately if userId is already known at mount time.
-  // Consistent with the useUserSignal pattern (useState(!!userId)).
-  const [loading, setLoading] = useState(userId !== null);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading]         = useState(userId !== null);
+  const [error, setError]             = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) {
@@ -60,23 +60,24 @@ export function useUserPreferences(userId: string | null): UseUserPreferencesRes
     };
   }, [userId]);
 
-  const updateTheme = useCallback(
-    async (theme: ThemePreference) => {
+  const upsertPrefs = useCallback(
+    async (patch: Partial<UserPreferences>) => {
       if (!userId) return;
 
       const updated_at = new Date().toISOString();
+      const applied = { ...patch, updated_at };
 
       // Optimistic update
       setPreferences(prev =>
         prev
-          ? { ...prev, theme, updated_at }
-          : { user_id: userId, theme, updated_at }
+          ? { ...prev, ...applied }
+          : { user_id: userId, theme: 'system', default_home_feed: 'new', updated_at, ...patch }
       );
       setError(null);
 
       const { error: upsertError } = await supabase
         .from('user_preferences')
-        .upsert({ user_id: userId, theme, updated_at }, { onConflict: 'user_id' });
+        .upsert({ user_id: userId, ...applied }, { onConflict: 'user_id' });
 
       if (upsertError) {
         console.error('[useUserPreferences] upsert error:', upsertError.message);
@@ -91,8 +92,18 @@ export function useUserPreferences(userId: string | null): UseUserPreferencesRes
         setPreferences(data);
       }
     },
-    [userId]
+    [userId],
   );
 
-  return { preferences, loading, error, updateTheme };
+  const updateTheme = useCallback(
+    (theme: ThemePreference) => upsertPrefs({ theme }),
+    [upsertPrefs],
+  );
+
+  const updateDefaultFeed = useCallback(
+    (feed: FeedMode) => upsertPrefs({ default_home_feed: feed }),
+    [upsertPrefs],
+  );
+
+  return { preferences, loading, error, updateTheme, updateDefaultFeed };
 }

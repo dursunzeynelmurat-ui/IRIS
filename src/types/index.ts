@@ -197,7 +197,64 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 export interface UserPreferences {
   user_id: string;
   theme: ThemePreference;
+  /** Which feed tab the user lands on when opening the app. */
+  default_home_feed: FeedMode;
   updated_at: string;
+}
+
+/** Status lifecycle of a user-submitted signal lead (migration 040). */
+export type SignalLeadStatus =
+  | 'pending'
+  | 'matched_existing_event'
+  | 'created_new_event'
+  | 'rejected'
+  | 'rate_limited'
+  | 'blocked';
+
+/** Row from public.user_signal_leads as returned by get_my_signal_leads. */
+export interface UserSignalLead {
+  id: string;
+  content: string;
+  status: SignalLeadStatus;
+  context_event_id: string | null;
+  matched_event_id: string | null;
+  rejection_reason: string | null;
+  reputation_impact: number;
+  created_at: string;
+  processed_at: string | null;
+}
+
+/** Result of submit_signal_lead RPC. */
+export interface SignalLeadSubmitResult {
+  lead_id: string;
+  status: SignalLeadStatus;
+  message: string;
+  blocked_until?: string;
+}
+
+/** Row from public.user_reputation as returned by get_my_reputation. */
+export interface UserReputation {
+  reputation_score: number;   // 0–200; 100 = neutral default
+  total_leads: number;
+  accepted_leads: number;
+  rejected_leads: number;
+  misleading_strikes: number;
+  blocked_until: string | null;
+}
+
+/** Row from public.event_revisions — title/summary evolution history. */
+export interface EventRevision {
+  id: string;
+  event_id: string;
+  revision_type: 'title' | 'summary' | 'both';
+  old_title: string | null;
+  new_title: string | null;
+  old_summary: string | null;
+  new_summary: string | null;
+  trigger_reason: string | null;
+  triggered_by: 'ingestion' | 'recompute' | 'manual_admin';
+  source_update_id: string | null;
+  created_at: string;
 }
 
 // ── Phase 2 pipeline types ────────────────────────────────────────────────────
