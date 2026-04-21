@@ -21,6 +21,7 @@ import { formatRelativeTime, formatTimelineTimestamp } from '../lib/formatRelati
 import { safeOpenURL } from '../lib/openURL';
 import { EventUpdate } from '../types';
 import type { RootStackParamList } from '../types/navigation';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventDetail'>;
 type DetailTab = 'updates' | 'sources';
@@ -159,6 +160,36 @@ function SourceRow({ source, isLast }: { source: EventUpdate; isLast: boolean })
           {formatRelativeTime(source.created_at)}
         </Text>
       </View>
+    </View>
+  );
+}
+
+// ── Submit signal link ────────────────────────────────────────
+// A controlled entry point for submitting a new lead/signal related to this event.
+// Visually separated from Confirm/Dispute — it's an intelligence submission, not a vote.
+
+function SubmitSignalLink({
+  eventId,
+  eventTitle,
+  navigation,
+}: {
+  eventId: string;
+  eventTitle: string;
+  navigation: NativeStackNavigationProp<RootStackParamList>;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.submitSignalRow, { borderTopColor: colors.border }]}>
+      <TouchableOpacity
+        onPress={() => navigation.navigate('SendSignal', { eventId, eventTitle })}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel="Submit a related signal to IRIS"
+      >
+        <Text style={[styles.submitSignalText, { color: colors.iris }]}>
+          Have new information? Submit a signal →
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -457,6 +488,15 @@ export function EventDetailScreen({ route, navigation }: Props) {
           </View>
         )}
 
+        {/* ── Submit a signal — separate from community signal ── */}
+        {userId && (
+          <SubmitSignalLink
+            eventId={event.id}
+            eventTitle={event.title}
+            navigation={navigation}
+          />
+        )}
+
         {/* ── Community signal — after scrolling through event context ── */}
         {userId && (
           <SignalSection eventId={event.id} userId={userId} />
@@ -723,6 +763,19 @@ const styles = StyleSheet.create({
   signalError: {
     fontSize: 12,
     marginTop: 4,
+  },
+
+  // ── Submit signal link ──
+  submitSignalRow: {
+    marginTop: 24,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  submitSignalText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
 
   // ── Empty / error ──

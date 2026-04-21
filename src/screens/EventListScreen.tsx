@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,19 +14,18 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { EventCard } from '../components/EventCard';
+import { useFeedPreference } from '../context/FeedPreferenceContext';
 import { useTheme } from '../context/ThemeContext';
 import { MIN_QUERY_LEN, useEventSearch } from '../hooks/useEventSearch';
 import { useEvents } from '../hooks/useEvents';
 import { useRisingEvents } from '../hooks/useRisingEvents';
 import { useVerifiedEvents } from '../hooks/useVerifiedEvents';
-import { Event } from '../types';
+import { Event, FeedTab } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EventList'>;
 
 // ── Feed tab types ────────────────────────────────────────────
-
-type FeedTab = 'new' | 'verified' | 'rising';
 
 interface Tab {
   key: FeedTab;
@@ -44,7 +43,20 @@ const TABS: Tab[] = [
 export function EventListScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const [activeTab, setActiveTab] = useState<FeedTab>('new');
+  const { defaultFeed } = useFeedPreference();
+
+  // Initialize from the user's stored preference.
+  // A one-time sync handles the edge case where the preference loads
+  // from the DB after this component first mounts.
+  const [activeTab, setActiveTab] = useState<FeedTab>(defaultFeed);
+  const tabInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!tabInitializedRef.current) {
+      tabInitializedRef.current = true;
+      setActiveTab(defaultFeed);
+    }
+  }, [defaultFeed]);
 
   // New: all events ordered by latest activity (backend-ordered)
   const { events, loading, refreshing, error, refetch } = useEvents();

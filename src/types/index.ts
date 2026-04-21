@@ -7,6 +7,9 @@ export type EventStatus = 'emerging' | 'developing' | 'verified' | 'disputed';
 
 export type SignalType = 'confirm' | 'dispute';
 
+/** Feed tabs — shared between EventListScreen and feed preference settings. */
+export type FeedTab = 'new' | 'verified' | 'rising';
+
 // public.events
 export interface Event {
   id: string;
@@ -38,6 +41,16 @@ export interface Signal {
   user_id: string;
   event_id: string;
   type: SignalType;
+  created_at: string;
+}
+
+// public.signal_submissions
+export interface SignalSubmission {
+  id: string;
+  user_id: string;
+  event_id: string | null;
+  content: string;
+  status: 'pending' | 'reviewed' | 'accepted' | 'rejected';
   created_at: string;
 }
 

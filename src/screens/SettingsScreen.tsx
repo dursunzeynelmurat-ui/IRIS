@@ -1,93 +1,126 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFeedPreference } from '../context/FeedPreferenceContext';
 import { useTheme, type ThemePreference } from '../context/ThemeContext';
+import { FeedTab } from '../types';
 import type { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
-interface ThemeOption {
-  value: ThemePreference;
+// ── Option definitions ────────────────────────────────────────
+
+interface Option<T extends string> {
+  value: T;
   label: string;
   description: string;
 }
 
-const THEME_OPTIONS: ThemeOption[] = [
-  { value: 'system', label: 'System', description: 'Follows your device setting' },
-  { value: 'light',  label: 'Light',  description: 'Always use light appearance' },
-  { value: 'dark',   label: 'Dark',   description: 'Always use dark appearance' },
+const THEME_OPTIONS: Option<ThemePreference>[] = [
+  { value: 'system', label: 'System',  description: 'Follows your device setting' },
+  { value: 'light',  label: 'Light',   description: 'Always use light appearance' },
+  { value: 'dark',   label: 'Dark',    description: 'Always use dark appearance' },
 ];
 
-// StatusBar is NOT rendered here — App.tsx already renders one StatusBar for
-// the entire NavigationContainer tree. Deep screens inherit that setting.
+const FEED_OPTIONS: Option<FeedTab>[] = [
+  { value: 'new',      label: 'Newest',   description: 'Most recently active events first' },
+  { value: 'verified', label: 'Verified', description: 'Events confirmed by multiple sources' },
+  { value: 'rising',   label: 'Rising',   description: 'Events gaining source momentum' },
+];
 
-export function SettingsScreen(_: Props) {
-  const { preference, setPreference, colors } = useTheme();
+// ── Reusable radio group ──────────────────────────────────────
 
+interface RadioGroupProps<T extends string> {
+  options: Option<T>[];
+  selected: T;
+  onSelect: (v: T) => void;
+}
+
+function RadioGroup<T extends string>({ options, selected, onSelect }: RadioGroupProps<T>) {
+  const { colors } = useTheme();
   return (
-    <View style={[styles.screen, { backgroundColor: colors.bg }]}>
-      <Text style={[styles.sectionLabel, { color: colors.textTertiary }]}>
-        APPEARANCE
-      </Text>
+    <View
+      style={[styles.group, { backgroundColor: colors.bgElevated }]}
+      accessibilityRole="radiogroup"
+    >
+      {options.map(({ value, label, description }, idx) => {
+        const isSelected = selected === value;
+        const isLast     = idx === options.length - 1;
 
-      <View
-        style={[styles.group, { backgroundColor: colors.bgElevated }]}
-        accessibilityRole="radiogroup"
-      >
-        {THEME_OPTIONS.map(({ value, label, description }, idx) => {
-          const isSelected = preference === value;
-          const isLast = idx === THEME_OPTIONS.length - 1;
-
-          return (
-            <TouchableOpacity
-              key={value}
-              style={[
-                styles.row,
-                !isLast && {
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                  borderBottomColor: colors.border,
-                },
-              ]}
-              onPress={() => setPreference(value)}
-              activeOpacity={0.7}
-              accessibilityRole="radio"
-              accessibilityLabel={label}
-              accessibilityHint={description}
-              accessibilityState={{ checked: isSelected }}
-            >
-              {/* Radio indicator */}
-              <View
-                style={[
-                  styles.radio,
-                  {
-                    borderColor: isSelected ? colors.iris : colors.borderStrong,
-                  },
-                ]}
-              >
-                {isSelected && (
-                  <View style={[styles.radioFill, { backgroundColor: colors.iris }]} />
-                )}
-              </View>
-
-              <View style={styles.labelGroup}>
-                <Text style={[styles.optionLabel, { color: colors.textPrimary }]}>
-                  {label}
-                </Text>
-                <Text style={[styles.optionDesc, { color: colors.textTertiary }]}>
-                  {description}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+        return (
+          <TouchableOpacity
+            key={value}
+            style={[
+              styles.row,
+              !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+            ]}
+            onPress={() => onSelect(value)}
+            activeOpacity={0.7}
+            accessibilityRole="radio"
+            accessibilityLabel={label}
+            accessibilityHint={description}
+            accessibilityState={{ checked: isSelected }}
+          >
+            <View style={[styles.radio, { borderColor: isSelected ? colors.iris : colors.borderStrong }]}>
+              {isSelected && <View style={[styles.radioFill, { backgroundColor: colors.iris }]} />}
+            </View>
+            <View style={styles.labelGroup}>
+              <Text style={[styles.optionLabel, { color: colors.textPrimary }]}>{label}</Text>
+              <Text style={[styles.optionDesc, { color: colors.textTertiary }]}>{description}</Text>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
 
+// ── Screen ────────────────────────────────────────────────────
+
+// StatusBar is NOT rendered here — App.tsx renders one StatusBar for the
+// entire NavigationContainer tree. Deep screens inherit that setting.
+
+export function SettingsScreen(_: Props) {
+  const { preference, setPreference, colors } = useTheme();
+  const { defaultFeed, setDefaultFeed }       = useFeedPreference();
+
+  return (
+    <ScrollView
+      style={[styles.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* ── Appearance ── */}
+      <Text style={[styles.sectionLabel, { color: colors.textTertiary }]}>
+        APPEARANCE
+      </Text>
+      <RadioGroup
+        options={THEME_OPTIONS}
+        selected={preference}
+        onSelect={setPreference}
+      />
+
+      {/* ── Default home feed ── */}
+      <Text style={[styles.sectionLabel, { color: colors.textTertiary }]}>
+        DEFAULT HOME FEED
+      </Text>
+      <RadioGroup
+        options={FEED_OPTIONS}
+        selected={defaultFeed}
+        onSelect={setDefaultFeed}
+      />
+    </ScrollView>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+  },
+  content: {
     paddingTop: 20,
+    paddingBottom: 40,
   },
 
   sectionLabel: {

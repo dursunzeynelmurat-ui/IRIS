@@ -143,8 +143,20 @@ export function ProfileScreen({ navigation }: Props) {
         <SectionLabel label="SETTINGS" color={colors.textTertiary} />
         <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
           <NavRow
-            label="Appearance"
+            label="Preferences"
             onPress={() => navigation.navigate('Settings')}
+            textColor={colors.textPrimary}
+            borderColor={colors.border}
+            accentColor={colors.textTertiary}
+          />
+        </View>
+
+        {/* ── Intelligence section ── */}
+        <SectionLabel label="INTELLIGENCE" color={colors.textTertiary} />
+        <View style={[styles.group, { backgroundColor: colors.bgElevated }]}>
+          <NavRow
+            label="Send a Signal"
+            onPress={() => navigation.navigate('SendSignal', {})}
             textColor={colors.textPrimary}
             borderColor={colors.border}
             accentColor={colors.textTertiary}
