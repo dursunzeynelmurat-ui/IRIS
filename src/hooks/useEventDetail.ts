@@ -43,7 +43,16 @@ export function useEventDetail(eventId: string): UseEventDetailResult {
       return;
     }
 
-    setEvent(eventResult.data);
+    // get_event_detail is RETURNS TABLE — PostgREST returns an array of rows.
+    const eventRow = ((eventResult.data as Event[] | null) ?? [])[0] ?? null;
+    if (!eventRow) {
+      setError('Event not found.');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    setEvent(eventRow);
 
     if (updatesResult.error) {
       if (__DEV__) console.error('[useEventDetail] updates fetch:', updatesResult.error);

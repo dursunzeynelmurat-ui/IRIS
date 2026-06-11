@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+const MIN_LENGTH    = 10; // mirrors the submit_signal_lead server-side guard
 const MAX_LENGTH    = 140;
 const COOLDOWN_SECS = 30;
 
@@ -37,6 +38,10 @@ export function useSignalSubmission(userId: string | null): UseSignalSubmissionR
 
     const trimmed = content.trim();
     if (!trimmed) { setError('Signal cannot be empty.'); return; }
+    if (trimmed.length < MIN_LENGTH) {
+      setError(`Signal must be at least ${MIN_LENGTH} characters.`);
+      return;
+    }
     if (trimmed.length > MAX_LENGTH) {
       setError(`Signal must be ${MAX_LENGTH} characters or fewer.`);
       return;

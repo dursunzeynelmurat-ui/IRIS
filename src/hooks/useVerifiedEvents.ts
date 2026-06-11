@@ -37,10 +37,12 @@ export function useVerifiedEvents(): VerifiedEventsResult {
     }
     setError(null);
 
+    // Mirrors get_feed_events('verified') semantics: verified AND visible.
     const { data, error: dbError } = await supabase
       .from('events')
       .select('*')
       .eq('status', 'verified')
+      .eq('visibility', 'visible')
       .order('latest_update_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
 
@@ -68,7 +70,7 @@ export function useVerifiedEvents(): VerifiedEventsResult {
           const incoming = payload.new;
           if (!incoming || typeof incoming !== 'object' || !('id' in incoming)) return;
           const updated = incoming as Event;
-          if (updated.status === 'verified') {
+          if (updated.status === 'verified' && updated.visibility === 'visible') {
             setEvents((prev) => {
               const idx = prev.findIndex((e) => e.id === updated.id);
               if (idx >= 0) {
@@ -90,7 +92,7 @@ export function useVerifiedEvents(): VerifiedEventsResult {
           const incoming = payload.new;
           if (!incoming || typeof incoming !== 'object' || !('id' in incoming)) return;
           const newEvent = incoming as Event;
-          if (newEvent.status !== 'verified') return;
+          if (newEvent.status !== 'verified' || newEvent.visibility !== 'visible') return;
           setEvents((prev) => {
             if (prev.some((e) => e.id === newEvent.id)) return prev;
             return [newEvent, ...prev];
