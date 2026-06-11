@@ -213,7 +213,7 @@ function SignalSection({ eventId, userId }: { eventId: string; userId: string })
         COMMUNITY SIGNAL
       </Text>
       <Text style={[styles.signalSubtitle, { color: colors.textSecondary }]}>
-        Signal your read on this event. Community input may influence the trust score by up to ±10 points — trust is primarily source-derived.
+        Signal your read on this event. Community input may influence the trust score by up to ±8 points — trust is primarily source-derived.
       </Text>
 
       <View style={styles.signalButtons}>

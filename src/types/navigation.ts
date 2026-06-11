@@ -4,4 +4,5 @@ export type RootStackParamList = {
   Profile: undefined;
   Settings: undefined;
   SendSignal: { eventId?: string; eventTitle?: string } | undefined;
+  MySignals: undefined;
 };

@@ -71,14 +71,14 @@ export function useSignalLead(userId: string | null): UseSignalLeadResult {
       if (cancelled) return;
 
       if (leadsResult.error) {
-        console.error('[useSignalLead] leads fetch:', leadsResult.error.message);
+        if (__DEV__) console.error('[useSignalLead] leads fetch:', leadsResult.error.message);
         setError('Unable to load your leads');
       } else {
         setLeads((leadsResult.data as UserSignalLead[]) ?? []);
       }
 
       if (repResult.error) {
-        console.error('[useSignalLead] reputation fetch:', repResult.error.message);
+        if (__DEV__) console.error('[useSignalLead] reputation fetch:', repResult.error.message);
       } else {
         const rows = repResult.data as UserReputation[];
         setReputation(rows?.[0] ?? null);

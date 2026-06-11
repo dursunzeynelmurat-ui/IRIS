@@ -11,6 +11,7 @@ import { useAuth } from './src/hooks/useAuth';
 import { useUserPreferences } from './src/hooks/useUserPreferences';
 import { EventDetailScreen } from './src/screens/EventDetailScreen';
 import { EventListScreen } from './src/screens/EventListScreen';
+import { MySignalsScreen } from './src/screens/MySignalsScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { SendSignalScreen } from './src/screens/SendSignalScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -80,6 +81,15 @@ function AppContent() {
             component={SendSignalScreen}
             options={{
               title: 'Send a Signal',
+              headerBackTitle: '',
+              headerShadowVisible: false,
+            }}
+          />
+          <Stack.Screen
+            name="MySignals"
+            component={MySignalsScreen}
+            options={{
+              title: 'My Signals',
               headerBackTitle: '',
               headerShadowVisible: false,
             }}

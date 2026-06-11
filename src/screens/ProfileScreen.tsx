@@ -161,6 +161,13 @@ export function ProfileScreen({ navigation }: Props) {
             borderColor={colors.border}
             accentColor={colors.textTertiary}
           />
+          <NavRow
+            label="My Signals"
+            onPress={() => navigation.navigate('MySignals')}
+            textColor={colors.textPrimary}
+            borderColor={colors.border}
+            accentColor={colors.textTertiary}
+          />
         </View>
 
         {/* ── Account section ── */}
